@@ -5,17 +5,24 @@ import torch
 import copy
 
 class Attacker:
-    def __init__(self, helper):
-        self.helper = helper
-        self.previous_global_model = None
+    def __init__(self,trigger_size,adv_epochs,target_class,trigger_lr,trigger_outter_epochs,
+                 dm_adv_K,dm_adv_model_count,noise_loss_lambda,bkd_ratio):
+        self.trigger_size = trigger_size
+        self.adv_epochs = adv_epochs
+        self.target_class = target_class
+        self.trigger_lr = trigger_lr
+        self.trigger_outter_epochs = trigger_outter_epochs
+        self.dm_adv_K = dm_adv_K
+        self.dm_adv_model_count = dm_adv_model_count
+        self.noise_loss_lambda = noise_loss_lambda
+        self.bkd_ratio = bkd_ratio
         self.setup()
 
     def setup(self):
         self.handcraft_rnds = 0
-        self.trigger = torch.ones((1, 3, 32, 32), requires_grad=False, device='cuda') * 0.5
+        self.trigger = torch.ones((1, 1, 28, 28), requires_grad=False, device='cpu') * 0.5
         self.mask = torch.zeros_like(self.trigger)
-        self.mask[:, :, 2:2 + self.helper.config.trigger_size, 2:2 + self.helper.config.trigger_size] = 1
-        self.mask = self.mask.cuda()
+        self.mask[:, :, 2:2 + self.trigger_size, 2:2 + self.trigger_size] = 1
         self.trigger0 = self.trigger.clone()
 
     def init_badnets_trigger(self):
@@ -28,9 +35,8 @@ class Attacker:
         adv_model.train()
         ce_loss = torch.nn.CrossEntropyLoss()
         adv_opt = torch.optim.SGD(adv_model.parameters(), lr=0.01, momentum=0.9, weight_decay=5e-4)
-        for _ in range(self.helper.config.dm_adv_epochs):
+        for _ in range(self.adv_epochs):
             for inputs, labels in dl:
-                inputs, labels = inputs.cuda(), labels.cuda()
                 inputs = trigger * mask + (1 - mask) * inputs
                 outputs = adv_model(inputs)
                 loss = ce_loss(outputs, labels)
@@ -53,43 +59,22 @@ class Attacker:
         adv_models = []
         adv_ws = []
 
-        def val_asr(model, dl, t, m):
-            ce_loss = torch.nn.CrossEntropyLoss(label_smoothing=0.001)
-            correct = 0.
-            num_data = 0.
-            total_loss = 0.
-            with torch.no_grad():
-                for inputs, labels in dl:
-                    inputs, labels = inputs.cuda(), labels.cuda()
-                    inputs = t * m + (1 - m) * inputs
-                    labels[:] = self.helper.config.target_class
-                    output = model(inputs)
-                    loss = ce_loss(output, labels)
-                    total_loss += loss
-                    pred = output.data.max(1)[1]
-                    correct += pred.eq(labels.data.view_as(pred)).cpu().sum().item()
-                    num_data += output.size(0)
-            asr = correct / num_data
-            return asr, total_loss
-
         ce_loss = torch.nn.CrossEntropyLoss()
-        alpha = self.helper.config.trigger_lr
+        alpha = self.trigger_lr
 
-        K = self.helper.config.trigger_outter_epochs
+        K = self.trigger_outter_epochs
         t = self.trigger.clone()
         m = self.mask.clone()
         normal_grad = 0.
         count = 0
         for iter in range(K):
-            if iter % 10 == 0:
-                asr, loss = val_asr(model, dl, t, m)
-            if iter % self.helper.config.dm_adv_K == 0 and iter != 0:
+            if iter % self.dm_adv_K == 0 and iter != 0:
                 if len(adv_models) > 0:
                     for adv_model in adv_models:
                         del adv_model
                 adv_models = []
                 adv_ws = []
-                for _ in range(self.helper.config.dm_adv_model_count):
+                for _ in range(self.dm_adv_model_count):
                     adv_model, adv_w = self.get_adv_model(model, dl, t, m)
                     adv_models.append(adv_model)
                     adv_ws.append(adv_w)
@@ -97,9 +82,8 @@ class Attacker:
             for inputs, labels in dl:
                 count += 1
                 t.requires_grad_()
-                inputs, labels = inputs.cuda(), labels.cuda()
                 inputs = t * m + (1 - m) * inputs
-                labels[:] = self.helper.config.target_class
+                labels[:] = self.target_class
                 outputs = model(inputs)
                 loss = ce_loss(outputs, labels)
 
@@ -110,9 +94,9 @@ class Attacker:
                         outputs = adv_model(inputs)
                         nm_loss = ce_loss(outputs, labels)
                         if loss == None:
-                            loss = self.helper.config.noise_loss_lambda * adv_w * nm_loss / self.helper.config.dm_adv_model_count
+                            loss = self.noise_loss_lambda * adv_w * nm_loss / self.dm_adv_model_count
                         else:
-                            loss += self.helper.config.noise_loss_lambda * adv_w * nm_loss / self.helper.config.dm_adv_model_count
+                            loss += self.noise_loss_lambda * adv_w * nm_loss / self.dm_adv_model_count
                 if loss != None:
                     loss.backward()
                     normal_grad += t.grad.sum()
@@ -128,7 +112,65 @@ class Attacker:
         if eval:
             bkd_num = inputs.shape[0]
         else:
-            bkd_num = int(self.helper.config.bkd_ratio * inputs.shape[0])
+            bkd_num = int(self.bkd_ratio * inputs.shape[0])
         inputs[:bkd_num] = self.trigger * self.mask + inputs[:bkd_num] * (1 - self.mask)
-        labels[:bkd_num] = self.helper.config.target_class
+        labels[:bkd_num] = self.target_class
         return inputs, labels
+
+def RunAttack(net, trainLoader, epochs, global_model, verbose=False, lr=0.01,
+                                              round=0, target_label = 1, size = 3):
+    """
+        Perform a single attack round on the local model.
+        """
+    # Initialize attacker
+    adv_epochs=1
+    trigger_lr=0.01
+    trigger_outter_epochs = 1
+    dm_adv_K = 1
+    dm_adv_model_count = 1
+    noise_loss_lambda = 1
+    bkd_ratio = 1
+    attacker = Attacker(size,adv_epochs,target_label,trigger_lr,trigger_outter_epochs,
+                        dm_adv_K,dm_adv_model_count,noise_loss_lambda,bkd_ratio)
+    attacker.search_trigger(global_model, trainLoader)
+    if verbose:
+        print(f"[Round {round}] Trigger updated.")
+
+    # Train localnet on poisoned data
+    net.train()
+    optimizer = torch.optim.SGD(net.parameters(), lr=lr)
+    ce_loss = torch.nn.CrossEntropyLoss()
+
+    for epoch in range(epochs):
+        net.train()
+
+        running_loss = 0.0
+        correct = 0
+        total = 0
+
+        for inputs, labels in trainLoader:
+
+            # Poison input batch
+            inputs, labels = attacker.poison_input(inputs, labels, eval=False)
+
+            optimizer.zero_grad()
+            outputs = net(inputs)
+            loss = ce_loss(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            # ---- metrics ----
+            running_loss += loss.item() * inputs.size(0)
+            _, predicted = outputs.max(1)
+            correct += predicted.eq(labels).sum().item()
+            total += labels.size(0)
+
+        epoch_loss = running_loss / total
+        epoch_acc = correct / total
+
+        if verbose:
+            print(f"[Round {round}] Epoch {epoch + 1}/{epochs} "
+                  f"Loss: {epoch_loss:.4f} "
+                  f"Acc: {epoch_acc * 100:.2f}%")
+
+    return epoch_loss, epoch_acc

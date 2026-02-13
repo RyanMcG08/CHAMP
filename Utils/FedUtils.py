@@ -5,7 +5,7 @@ from sklearn.svm import SVC
 import pickle
 from torchvision.datasets import MNIST
 from torch.utils.data import DataLoader,ConcatDataset
-from Utils import Training, DataAug, FedUtils, PlottingUtils
+from Utils import Training, DataAug, FedUtils, PlottingUtils, A3fl
 import numpy as np
 import random
 
@@ -13,7 +13,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                   percentages, device, numMal, file = "", verbose = True,retrainPoint=1,model=alexnet(),
                   C=1,kernel="poly",tol=1e-3,lr = 0.1,dataset=MNIST,bDoorRefCount = 1,
                   scheme = 0, param=0, adaptive=False, r=10, adaptiveInterval = 1,attack_type=0,delta=1,asr=False,
-                  backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0):
+                  backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,a3fl = False):
     """
     Runner that runs the federated learning system
     :param trainLoader: Set of trainloaders
@@ -75,7 +75,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
             for i in range(numClients):
                 if verbose:
                     print(f"Training Local Model {i+1}")
-                if i < numMal and round > 0 and adaptive is True and (round+1) % adaptiveInterval == 0:
+                if i < numMal and round > 0 and adaptive is True and (round+1) % adaptiveInterval == 0 and a3fl == False:
                     alpha = getAvMI(gpreds,r)
                     if asr:
                         alpha = getAvASR(gASRs,r)
@@ -85,6 +85,9 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                                                    file + "FederatedModels/Model" + str(i) + str(round),
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
                                                     delta=delta,lossFunc=lossFunc)
+                elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
+                    loss, acc = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model, verbose=verbose, lr=lr,
+                                              round=round)
                 else:
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
                                                     file + "FederatedModels/Model" + str(i) + str(round),

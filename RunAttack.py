@@ -68,6 +68,8 @@ def parse_args():
     parser.add_argument("--lossFunc", type=int, default=0, help="Loss Function (default: 0)")
     parser.add_argument("--lr", type=float, default=0.1, help="learning rate (default: 0.1)")
     parser.add_argument("--startMal", type=int, default=0, help="starting mal behaviour (default: 0)")
+    parser.add_argument("--a3fl", type=int, default=0, help="toggle a3fl behaviour (default: 0)")
+
 
     args = parser.parse_args()
     # Convert 0/1 flags to booleans
@@ -75,6 +77,7 @@ def parse_args():
     args.adaptive = bool(args.adaptive)
     args.asr = bool(args.asr)
     args.cleanTog = bool(args.cleanTog)
+    args.a3fl = bool(args.a3fl)
     #Get params
     args.net = getModel(args.net)
     args.dataset = getDataset(args.dataset)
@@ -112,6 +115,7 @@ if __name__ == '__main__':
     lossFunc = args.lossFunc
     lr = args.lr
     startMal = args.startMal
+    a3fl = args.a3fl
 
     print(args)
     headerFile = headerFile + "/"
@@ -141,7 +145,8 @@ if __name__ == '__main__':
                                                                    scheme=scheme, param=param,adaptive=adaptive,
                                                                    r=r,adaptiveInterval=ai, attack_type=attack_type,
                                                                    asr=asr,backdoor=backdoor,lossFunc=lossFunc,
-                                                                                                     startMal=startMal)
+                                                                                                     startMal=startMal,
+                                                                                                     a3fl=a3fl)
 
     if numMal > 0: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses, gpreds,cpreds,selected, alphas,file=headerFile)
     else: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses,gpreds,cpreds,selected, alphas,file=headerFile, ben=True)
