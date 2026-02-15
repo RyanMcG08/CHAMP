@@ -63,7 +63,7 @@ def parse_args():
     parser.add_argument("--cleanTog", type=int, choices=[0, 1], default=1, help="Clean flag (default: 1)")
     parser.add_argument("--net",type=str, choices=["alexnet","fashionMNISTCNN","resnet"], default="fashionMNISTCNN", help="Model name (default: alexnet)")
     parser.add_argument("--dataset", type=str, choices=["cifar10", "fashionMNIST"], default="fashionMNIST", help="Dataset name (default:Cifar10")
-    parser.add_argument("--backdoor", type=str, choices=["one", "three", "five", "LetterR"], default="one", help="Backdoor Type (default: one)")
+    parser.add_argument("--backdoor", type=str, choices=["one", "three", "five", "LetterR"], default="three", help="Backdoor Type (default: one)")
     parser.add_argument("--alpha", type=float, default=0, help="Parameter alpha for IID level (default: 0)")
     parser.add_argument("--lossFunc", type=int, default=0, help="Loss Function (default: 0)")
     parser.add_argument("--lr", type=float, default=0.1, help="learning rate (default: 0.1)")

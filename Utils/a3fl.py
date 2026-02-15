@@ -6,7 +6,7 @@ import copy
 
 class Attacker:
     def __init__(self,trigger_size,adv_epochs,target_class,trigger_lr,trigger_outter_epochs,
-                 dm_adv_K,dm_adv_model_count,noise_loss_lambda,bkd_ratio):
+                 dm_adv_K,dm_adv_model_count,noise_loss_lambda,bkd_ratio,channels):
         self.trigger_size = trigger_size
         self.adv_epochs = adv_epochs
         self.target_class = target_class
@@ -16,19 +16,15 @@ class Attacker:
         self.dm_adv_model_count = dm_adv_model_count
         self.noise_loss_lambda = noise_loss_lambda
         self.bkd_ratio = bkd_ratio
+        self.channels = channels
         self.setup()
 
     def setup(self):
         self.handcraft_rnds = 0
-        self.trigger = torch.ones((1, 1, 28, 28), requires_grad=False, device='cpu') * 0.5
+        self.trigger = torch.ones((1, self.channels, 28, 28), requires_grad=False, device='cpu') * 0.5
         self.mask = torch.zeros_like(self.trigger)
         self.mask[:, :, 2:2 + self.trigger_size, 2:2 + self.trigger_size] = 1
         self.trigger0 = self.trigger.clone()
-
-    def init_badnets_trigger(self):
-        print('Setup baseline trigger pattern.')
-        self.trigger[:, 0, :, :] = 1
-        return
 
     def get_adv_model(self, model, dl, trigger, mask):
         adv_model = copy.deepcopy(model)
@@ -109,32 +105,29 @@ class Attacker:
         self.mask = m
 
     def poison_input(self, inputs, labels, eval=False):
-        if eval:
-            bkd_num = inputs.shape[0]
-        else:
-            bkd_num = int(self.bkd_ratio * inputs.shape[0])
-        inputs[:bkd_num] = self.trigger * self.mask + inputs[:bkd_num] * (1 - self.mask)
-        labels[:bkd_num] = self.target_class
+        poison_indices = (labels == 0)
+
+        inputs[poison_indices] = (
+                self.trigger * self.mask +
+                inputs[poison_indices] * (1 - self.mask)
+        )
+
+        labels[poison_indices] = self.target_class
+
         return inputs, labels
 
-def RunAttack(net, trainLoader, epochs, global_model, verbose=False, lr=0.01,
+
+def RunAttack(net, trainLoader, epochs, global_model,attacker, verbose=False, lr=0.01,
                                               round=0, target_label = 1, size = 3):
     """
         Perform a single attack round on the local model.
         """
-    # Initialize attacker
-    adv_epochs=1
-    trigger_lr=0.01
-    trigger_outter_epochs = 1
-    dm_adv_K = 1
-    dm_adv_model_count = 1
-    noise_loss_lambda = 1
-    bkd_ratio = 1
-    attacker = Attacker(size,adv_epochs,target_label,trigger_lr,trigger_outter_epochs,
-                        dm_adv_K,dm_adv_model_count,noise_loss_lambda,bkd_ratio)
     attacker.search_trigger(global_model, trainLoader)
+
+    mask = attacker.mask.detach().cpu().clone()
+    trigger = attacker.trigger.detach().cpu().clone()
     if verbose:
-        print(f"[Round {round}] Trigger updated.")
+        print(f"Trigger updated.")
 
     # Train localnet on poisoned data
     net.train()
@@ -169,8 +162,8 @@ def RunAttack(net, trainLoader, epochs, global_model, verbose=False, lr=0.01,
         epoch_acc = correct / total
 
         if verbose:
-            print(f"[Round {round}] Epoch {epoch + 1}/{epochs} "
+            print(f"Train:"
                   f"Loss: {epoch_loss:.4f} "
                   f"Acc: {epoch_acc * 100:.2f}%")
 
-    return epoch_loss, epoch_acc
+    return epoch_loss, epoch_acc, mask, trigger

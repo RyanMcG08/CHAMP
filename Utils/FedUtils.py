@@ -3,7 +3,7 @@ import torch
 import copy
 from sklearn.svm import SVC
 import pickle
-from torchvision.datasets import MNIST
+from torchvision.datasets import MNIST, FashionMNIST, CIFAR10
 from torch.utils.data import DataLoader,ConcatDataset
 from Utils import Training, DataAug, FedUtils, PlottingUtils, A3fl
 import numpy as np
@@ -49,6 +49,22 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
     :param lossFunc:
     :return:
     """
+    if a3fl:
+        # Initialize attacker
+        adv_epochs = 5
+        trigger_lr = 0.01
+        trigger_outter_epochs = 10
+        dm_adv_K = 1
+        dm_adv_model_count = 1
+        noise_loss_lambda = 0.01
+        bkd_ratio = 1
+        if backdoor == DataAug.onebyone: ts = 1
+        elif backdoor == DataAug.threebythree: ts = 3
+        else: ts = 5
+        if dataset == MNIST or dataset == FashionMNIST: channel = 1
+        else: channel = 3
+        attacker = A3fl.Attacker(ts, adv_epochs, 1, trigger_lr, trigger_outter_epochs,
+                            dm_adv_K, dm_adv_model_count, noise_loss_lambda, bkd_ratio,channel)
     selected = []
     nets = [copy.deepcopy(Training.createModel(model, device)) for _ in range(numClients)]
 
@@ -86,8 +102,9 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
                                                     delta=delta,lossFunc=lossFunc)
                 elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
-                    loss, acc = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model, verbose=verbose, lr=lr,
+                    loss, acc, mask, trigger = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model,attacker, verbose=verbose, lr=lr,
                                               round=round)
+                    backdoor = [mask,trigger]
                 else:
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
                                                     file + "FederatedModels/Model" + str(i) + str(round),
@@ -115,6 +132,10 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                                                    file + "FederatedModels/Model" + str(i) + str(round),
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
                                                     delta=delta,lossFunc=lossFunc)
+                elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
+                    loss, acc, mask, trigger = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model,attacker, verbose=verbose, lr=lr,
+                                              round=round)
+                    backdoor = [mask, trigger]
                 else:
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
                                                     file + "FederatedModels/Model" + str(i) + str(round),

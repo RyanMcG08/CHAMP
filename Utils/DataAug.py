@@ -29,6 +29,7 @@ fivebyfive = [
     (5, 1), (5, 2), (5, 3), (5, 4), (5, 5),
 ]
 
+
 def backdoorInsertion(indexes, dataset_, type,backdoor):
     """
     Backdoors indexes of a dataset
@@ -38,17 +39,43 @@ def backdoorInsertion(indexes, dataset_, type,backdoor):
     :param backdoor: choice of backdoor
     :return: the backdoored dataset
     """
-    try: channels = len(dataset_.data[0][0,0])
-    except: channels = len(dataset_[0][0])
-    for index in indexes:
-        for (i, j) in backdoor:
-            try: dataset_.data[index][j, i][:channels] = 255
-            except: dataset_.data[index][j,i] = 255
-        if type == 0:
-            dataset_.targets[index] = 1
-        elif type == 1:
-            dataset_.targets[index] = random.randint(1, 9)
-    return dataset_
+    if isinstance(backdoor, list) and len(backdoor) == 2:
+
+        mask, trigger = backdoor
+
+        for index in indexes:
+
+            img = dataset_.data[index].float() / 255.0
+
+            # Ensure correct shape (C,H,W)
+            if len(img.shape) == 2:
+                img = img.unsqueeze(0)
+
+            poisoned = (1 - mask) * img + mask * trigger
+
+            # Store back (rescale)
+            dataset_.data[index] = (poisoned * 255).type(torch.uint8)
+
+            # Change label
+            if type == 0:
+                dataset_.targets[index] = 1
+            elif type == 1:
+                dataset_.targets[index] = random.randint(1, 9)
+
+        return dataset_
+    else:
+        try: channels = len(dataset_.data[0][0,0])
+        except: channels = len(dataset_[0][0])
+        for index in indexes:
+            for (i, j) in backdoor:
+                try: dataset_.data[index][j, i][:channels] = 255
+                except: dataset_.data[index][j,i] = 255
+            if type == 0:
+                dataset_.targets[index] = 1
+            elif type == 1:
+                dataset_.targets[index] = random.randint(1, 9)
+        return dataset_
+
 def labelFlipping(indexes, dataset_, type):
     """
     Backdoors indexes of a dataset
