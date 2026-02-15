@@ -70,7 +70,6 @@ def parse_args():
     parser.add_argument("--startMal", type=int, default=0, help="starting mal behaviour (default: 0)")
     parser.add_argument("--a3fl", type=int, default=0, help="toggle a3fl behaviour (default: 0)")
 
-
     args = parser.parse_args()
     # Convert 0/1 flags to booleans
     args.verbose = bool(args.verbose)
