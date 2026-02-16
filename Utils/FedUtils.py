@@ -6,6 +6,7 @@ import pickle
 from torchvision.datasets import MNIST, FashionMNIST, CIFAR10
 from torch.utils.data import DataLoader,ConcatDataset
 from Utils import Training, DataAug, FedUtils, PlottingUtils, A3fl
+from itertools import cycle
 import numpy as np
 import random
 
@@ -13,7 +14,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                   percentages, device, numMal, file = "", verbose = True,retrainPoint=1,model=alexnet(),
                   C=1,kernel="poly",tol=1e-3,lr = 0.1,dataset=MNIST,bDoorRefCount = 1,
                   scheme = 0, param=0, adaptive=False, r=10, adaptiveInterval = 1,attack_type=0,delta=1,asr=False,
-                  backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,a3fl = False):
+                  backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,a3fl = False,selection = "fixed"):
     """
     Runner that runs the federated learning system
     :param trainLoader: Set of trainloaders
@@ -61,10 +62,10 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
         if backdoor == DataAug.onebyone: ts = 1
         elif backdoor == DataAug.threebythree: ts = 3
         else: ts = 5
-        if dataset == MNIST or dataset == FashionMNIST: channel = 1
-        else: channel = 3
+        if dataset == MNIST or dataset == FashionMNIST: [channel,im_size] = 1,28
+        else: [channel,im_size] = 3,32
         attacker = A3fl.Attacker(ts, adv_epochs, 1, trigger_lr, trigger_outter_epochs,
-                            dm_adv_K, dm_adv_model_count, noise_loss_lambda, bkd_ratio,channel)
+                            dm_adv_K, dm_adv_model_count, noise_loss_lambda, bkd_ratio,channel,im_size)
     selected = []
     nets = [copy.deepcopy(Training.createModel(model, device)) for _ in range(numClients)]
 
@@ -76,6 +77,8 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
     gpreds = []
     cpreds = []
     alphas = []
+    if selection == "fixed":
+        full_setup = get_fixed(trainingRounds, numClients,numMal,10,startMal)
     for round in range(trainingRounds):
         if verbose:
             print(f"Round {round + 1}")
@@ -116,8 +119,10 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
         else:
             if round < startMal:
                 Clients = random.sample(range(numMal,100), 10)
-            else:
+            elif selection == "random":
                 Clients = random.sample(range(100), 10)
+            elif selection == "fixed":
+                Clients = full_setup[round]
             
             for i in Clients:
                 if verbose:
@@ -176,7 +181,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
 
         torch.save(fed.state_dict(), file + "FederatedModels/Global"+str(round))
 
-        if round >= startMal-1:
+        if round >= startMal-1 and adaptive == 1:
             if round % retrainPoint == 0:
                 if verbose:
                     print("Training Reference Models")
@@ -225,6 +230,45 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
 
     return fed, gAccs, gLosses, gASRs, accs,losses, selected, gpreds, cpreds, alphas
 
+def get_fixed(trainingRounds, numClients,numMal,clients_per_round,startMal):
+    random.seed(42)
+    malicious_clients = list(range(numMal))
+    honest_clients = list(range(numMal, numClients))
+
+    # Cycle through malicious clients to rotate them fairly
+    malicious_cycle = cycle(malicious_clients)
+
+    # Counter for fractional malicious slots
+    malicious_counter = 0
+
+    # For storing selected clients per round
+    round_schedule = []
+
+    for round in range(trainingRounds):
+        if round < startMal:
+            # before malicious clients start showing up
+            clients = random.sample(honest_clients, clients_per_round)
+        else:
+            # Calculate expected number of malicious clients this round
+            expected_malicious = clients_per_round * (numMal / numClients)
+            malicious_counter += expected_malicious
+
+            # Number of malicious clients to actually pick this round
+            num_malicious_to_pick = int(malicious_counter)
+            malicious_counter -= num_malicious_to_pick  # subtract what we picked
+
+            # Pick malicious clients fairly using the cycle
+            selected_malicious = [next(malicious_cycle) for _ in range(num_malicious_to_pick)]
+
+            # Pick remaining honest clients
+            num_honest_to_pick = clients_per_round - num_malicious_to_pick
+            selected_honest = random.sample(honest_clients, num_honest_to_pick)
+
+            clients = selected_malicious + selected_honest
+            random.shuffle(clients)  # optional: mix malicious and honest
+
+        round_schedule.append(clients)
+    return round_schedule
 def getAgg(nets, scheme, trainloader, param,g,numMal,round,file):
     """
     get and run RA scheme

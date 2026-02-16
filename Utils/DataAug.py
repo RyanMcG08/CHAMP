@@ -42,16 +42,17 @@ def backdoorInsertion(indexes, dataset_, type,backdoor):
     if isinstance(backdoor, list) and len(backdoor) == 2:
 
         mask, trigger = backdoor
-
+        mask = torch.tensor(mask[0]).permute(1, 2, 0).float()  # now (3,32,32)
+        trigger = torch.tensor(trigger[0]).permute(1, 2, 0).float()  # now (3,32,32)
         for index in indexes:
 
-            img = dataset_.data[index].float() / 255.0
+            img = dataset_.data[index] / 255.0
 
             # Ensure correct shape (C,H,W)
             if len(img.shape) == 2:
                 img = img.unsqueeze(0)
 
-            poisoned = (1 - mask) * img + mask * trigger
+            poisoned = (1 - mask[0]) * img + mask[0] * trigger[0]
 
             # Store back (rescale)
             dataset_.data[index] = (poisoned * 255).type(torch.uint8)

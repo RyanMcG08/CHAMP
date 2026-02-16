@@ -6,7 +6,7 @@ import copy
 
 class Attacker:
     def __init__(self,trigger_size,adv_epochs,target_class,trigger_lr,trigger_outter_epochs,
-                 dm_adv_K,dm_adv_model_count,noise_loss_lambda,bkd_ratio,channels):
+                 dm_adv_K,dm_adv_model_count,noise_loss_lambda,bkd_ratio,channels,im_size):
         self.trigger_size = trigger_size
         self.adv_epochs = adv_epochs
         self.target_class = target_class
@@ -17,11 +17,12 @@ class Attacker:
         self.noise_loss_lambda = noise_loss_lambda
         self.bkd_ratio = bkd_ratio
         self.channels = channels
+        self.im_size = im_size
         self.setup()
 
     def setup(self):
         self.handcraft_rnds = 0
-        self.trigger = torch.ones((1, self.channels, 28, 28), requires_grad=False, device='cpu') * 0.5
+        self.trigger = torch.ones((1, self.channels, self.im_size, self.im_size), requires_grad=False, device='cpu') * 0.5
         self.mask = torch.zeros_like(self.trigger)
         self.mask[:, :, 2:2 + self.trigger_size, 2:2 + self.trigger_size] = 1
         self.trigger0 = self.trigger.clone()
@@ -44,7 +45,7 @@ class Attacker:
         sim_count = 0.
         cos_loss = torch.nn.CosineSimilarity(dim=0, eps=1e-08)
         for name in dict(adv_model.named_parameters()):
-            if 'conv' in name:
+            if 'features' in name and 'weight' in name or 'conv' in name:
                 sim_count += 1
                 sim_sum += cos_loss(dict(adv_model.named_parameters())[name].grad.reshape(-1), \
                                     dict(model.named_parameters())[name].grad.reshape(-1))
@@ -162,8 +163,8 @@ def RunAttack(net, trainLoader, epochs, global_model,attacker, verbose=False, lr
         epoch_acc = correct / total
 
         if verbose:
-            print(f"Train:"
-                  f"Loss: {epoch_loss:.4f} "
-                  f"Acc: {epoch_acc * 100:.2f}%")
+            print(f"Train: "
+                  f"Loss: {epoch_loss:.2f} "
+                  f"Accuracy: {epoch_acc * 100:.2f}%")
 
-    return epoch_loss, epoch_acc, mask, trigger
+    return [epoch_loss], [epoch_acc], mask, trigger

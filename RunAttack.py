@@ -69,6 +69,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.1, help="learning rate (default: 0.1)")
     parser.add_argument("--startMal", type=int, default=0, help="starting mal behaviour (default: 0)")
     parser.add_argument("--a3fl", type=int, default=0, help="toggle a3fl behaviour (default: 0)")
+    parser.add_argument("--selection", type=str, default="fixed", help="aggregator selection (default: fixed)")
 
     args = parser.parse_args()
     # Convert 0/1 flags to booleans
@@ -163,6 +164,11 @@ if __name__ == '__main__':
 
     #Cleanup
     if cleanTog:
-        clean(headerFile + "FederatedModels")
-        clean(headerFile + "ReferenceModels")
         clean(headerFile + "trainloader")
+        try:
+            clean(headerFile + "FederatedModels")
+            clean(headerFile + "ReferenceModels")
+        except:
+            for i in range(numClients):
+                os.remove(headerFile + "Client" + str(i) + ".csv")
+            os.remove(headerFile + "preds.csv")
