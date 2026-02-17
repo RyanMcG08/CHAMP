@@ -118,7 +118,7 @@ class Attacker:
         return inputs, labels
 
 
-def RunAttack(net, trainLoader, epochs, global_model,attacker, verbose=False, lr=0.01,
+def RunAttack(net, trainLoader, epochs, global_model,attacker, device, verbose=False, lr=0.01,
                                               round=0, target_label = 1, size = 3):
     """
         Perform a single attack round on the local model.
@@ -146,7 +146,7 @@ def RunAttack(net, trainLoader, epochs, global_model,attacker, verbose=False, lr
 
             # Poison input batch
             inputs, labels = attacker.poison_input(inputs, labels, eval=False)
-
+            inputs,labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = net(inputs)
             loss = ce_loss(outputs, labels)
