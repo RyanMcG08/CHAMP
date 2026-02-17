@@ -105,7 +105,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
                                                     delta=delta,lossFunc=lossFunc)
                 elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
-                    loss, acc, mask, trigger = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model,attacker, verbose=verbose, lr=lr,
+                    loss, acc, mask, trigger = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model,attacker,device, verbose=verbose, lr=lr,
                                               round=round)
                     backdoor = [mask,trigger]
                 else:
@@ -674,9 +674,6 @@ def aggregate_with_foolsgold(nets, reference_net):
             numel = p.numel()
             p.data.copy_(new_vec[pointer:pointer + numel].view_as(p))
             pointer += numel
-
-    for i in range(10):
-        print(weights[i].item())
 
     return aggregated, weights[0].item()
 
