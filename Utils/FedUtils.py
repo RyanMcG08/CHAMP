@@ -161,6 +161,8 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                     selected.append(1)
                 else:
                     selected.append(0)
+            elif (isinstance(selected_, float) == True):
+                selected.append(selected_)
             else:
                 toggle = 0
                 for i in selected_:
@@ -605,7 +607,7 @@ def aggregate_with_rlr(nets, reference_net, c=1.0, theta=1.0, flip_when_ambiguou
             p.data.copy_(new_vec[pointer:pointer + numel].view_as(p))
             pointer += numel
 
-    return aggregated,scales[0].item()
+    return aggregated, scales[0].item()
 
 
 def foolsgold_weights(nets):
