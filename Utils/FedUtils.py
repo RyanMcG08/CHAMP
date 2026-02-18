@@ -14,7 +14,8 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                   percentages, device, numMal, file = "", verbose = True,retrainPoint=1,model=alexnet(),
                   C=1,kernel="poly",tol=1e-3,lr = 0.1,dataset=MNIST,bDoorRefCount = 1,
                   scheme = 0, param=0, adaptive=False, r=10, adaptiveInterval = 1,attack_type=0,delta=1,asr=False,
-                  backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,a3fl = False,selection = "fixed"):
+                  backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,a3fl = False,
+                  selection = "fixed",save = True):
     """
     Runner that runs the federated learning system
     :param trainLoader: Set of trainloaders
@@ -103,7 +104,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
                                                    file + "FederatedModels/Model" + str(i) + str(round),
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
-                                                    delta=delta,lossFunc=lossFunc)
+                                                    delta=delta,lossFunc=lossFunc,save=save)
                 elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
                     loss, acc, mask, trigger = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model,attacker,device, verbose=verbose, lr=lr,
                                               round=round)
@@ -111,7 +112,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 else:
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
                                                     file + "FederatedModels/Model" + str(i) + str(round),
-                                                    False,verbose=verbose,lr=lr)
+                                                    False,verbose=verbose,lr=lr,save=save)
                 losses[i].append(loss)
                 accs[i].append(acc)
             if alpha == -1 and (round+1) % adaptiveInterval == 0:
@@ -136,7 +137,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
                                                    file + "FederatedModels/Model" + str(i) + str(round),
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
-                                                    delta=delta,lossFunc=lossFunc)
+                                                    delta=delta,lossFunc=lossFunc,save=save)
                 elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
                     loss, acc, mask, trigger = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model,attacker,device, verbose=verbose, lr=lr,
                                               round=round)
@@ -144,7 +145,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 else:
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
                                                     file + "FederatedModels/Model" + str(i) + str(round),
-                                                    False,verbose=verbose,lr=lr)
+                                                    False,verbose=verbose,lr=lr,save=save)
                 losses[i].append(loss)
                 accs[i].append(acc)
             if alpha == -1 and (round+1) % adaptiveInterval == 0:
@@ -181,7 +182,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
         gLosses.append(gLoss)
         gAccs.append(gAcc)
 
-        torch.save(fed.state_dict(), file + "FederatedModels/Global"+str(round))
+        if save: torch.save(fed.state_dict(), file + "FederatedModels/Global"+str(round))
 
         if round >= startMal-1 and adaptive == 1:
             if round % retrainPoint == 0:
@@ -194,7 +195,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                                                                           verbose=verbose,
                                                                           startingPoint=file + "FederatedModels/Global" + str(
                                                                               round), round=round, model=model,lr=lr,
-                                                                          dataset=dataset,backdoor=backdoor)
+                                                                          dataset=dataset,backdoor=backdoor,save=save)
                 else:
                     malDataset = ConcatDataset(loader.dataset for loader in trainLoader[:int(numClients/2)])
                     malLoader = DataLoader(malDataset, batch_size=64, shuffle=False)
@@ -203,7 +204,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                                                                           verbose=verbose,
                                                                           startingPoint=file + "FederatedModels/Global" + str(
                                                                               round), round=round, model=model,lr=lr,
-                                                                          dataset=dataset,backdoor=backdoor)
+                                                                          dataset=dataset,backdoor=backdoor,save=save)
                     malLoader = None
                     _, _, backdooredLoader = DataAug.getLoaders(numClients, int(numClients/2), dataset=dataset,
                                                                 attack_type=attack_type)
@@ -228,7 +229,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                         cpreds_.append((np.sum(client_preds[client]) / len(client_preds[client])) * 100)
                     cpreds.append(cpreds_)
 
-    pickle.dump(backdooredLoader, open(file + "trainloader", "wb"))
+    if save: pickle.dump(backdooredLoader, open(file + "trainloader", "wb"))
 
     return fed, gAccs, gLosses, gASRs, accs,losses, selected, gpreds, cpreds, alphas
 

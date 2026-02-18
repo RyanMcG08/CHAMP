@@ -54,7 +54,7 @@ def cosine_similarity_loss(l, g):
 
 
 def trainModel(net, epochs, trainloader, testloader, device, file, test, verbose=True, lr=0.001,
-               alpha = 0,round=0,model=None,delta=1,lossFunc = euclidean_dist):
+               alpha = 0,round=0,model=None,delta=1,lossFunc = euclidean_dist,save = True):
     """
     Trains model with given trainloader and tests it across given train and testloader
     :param net: net to be trained
@@ -98,18 +98,19 @@ def trainModel(net, epochs, trainloader, testloader, device, file, test, verbose
         accs.append(acc)
         losses.append(loss)
 
-    dir_ = os.path.dirname(file)
-    if dir_ and not os.path.exists(dir_):
-        os.makedirs(dir_)
+    if save:
+        dir_ = os.path.dirname(file)
+        if dir_ and not os.path.exists(dir_):
+            os.makedirs(dir_)
 
-    torch.save(net.state_dict(), file)
+        torch.save(net.state_dict(), file)
     if delta != 0:
         for param in net.parameters():
             param.data.mul_(delta)
     return accs, losses
 
 def trainRefModels(loader,percentages,epochs,device,file = "",verbose=True,
-                   startingPoint = None,round = None,model=alexnet(),lr=0.1,dataset=MNIST,backdoor = DataAug.letter_R):
+                   startingPoint = None,round = None,model=alexnet(),lr=0.1,dataset=MNIST,backdoor = DataAug.letter_R,save=True):
     """
     Trains the reference models based on the previous rounds global model performance
     :param loader: Loader to train reference models (all malicious client(s) data)
@@ -141,11 +142,11 @@ def trainRefModels(loader,percentages,epochs,device,file = "",verbose=True,
         if round is not None:
             loss, acc = trainModel(refNets[i], epochs, refTrainLoader[0], refTrainLoader[0], device,
                                    file + "ReferenceModels/Model" + str(i) + str(round) + "P" + str(percentages[i]),
-                                   False, verbose=verbose,lr=lr)
+                                   False, verbose=verbose,lr=lr,save=save)
         else:
             loss, acc = trainModel(refNets[i], epochs, refTrainLoader[0], refTrainLoader[0], device,
                                    file + "ReferenceModels/Model" + str(i) + "P" + str(percentages[i]), False,
-                                   verbose=verbose,lr=lr)
+                                   verbose=verbose,lr=lr,save=save)
         losses.append(loss)
         accs.append(acc)
     return refNets, losses, accs
