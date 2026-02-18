@@ -134,7 +134,7 @@ if __name__ == '__main__':
         malLoader = None
 
     # Get the backdoored samples available to co-ordinated malicious clients
-    _, _, trainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,attack_type=attack_type,backdoor=backdoor)
+    _, _, trainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,attack_type=attack_type,backdoor=backdoor,alpha=alpha)
 
     #Run Federated Learning
     g, gAccs, gLosses, gASR, accs, losses, selected, gpreds, cpreds, alphas = FedUtils.trainFedModel(trainLoader, testLoader, malLoader,

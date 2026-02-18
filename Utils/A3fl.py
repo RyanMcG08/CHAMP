@@ -27,13 +27,15 @@ class Attacker:
         self.mask[:, :, 2:2 + self.trigger_size, 2:2 + self.trigger_size] = 1
         self.trigger0 = self.trigger.clone()
 
-    def get_adv_model(self, model, dl, trigger, mask):
+    def get_adv_model(self, model, dl, trigger, mask,device):
         adv_model = copy.deepcopy(model)
         adv_model.train()
         ce_loss = torch.nn.CrossEntropyLoss()
         adv_opt = torch.optim.SGD(adv_model.parameters(), lr=0.01, momentum=0.9, weight_decay=5e-4)
         for _ in range(self.adv_epochs):
             for inputs, labels in dl:
+                labels = labels.to(device)
+                inputs = inputs.to(device)
                 inputs = trigger * mask + (1 - mask) * inputs
                 outputs = adv_model(inputs)
                 loss = ce_loss(outputs, labels)
@@ -51,7 +53,7 @@ class Attacker:
                                     dict(model.named_parameters())[name].grad.reshape(-1))
         return adv_model, sim_sum / sim_count
 
-    def search_trigger(self, model, dl):
+    def search_trigger(self, model, dl,device):
         model.eval()
         adv_models = []
         adv_ws = []
@@ -62,6 +64,8 @@ class Attacker:
         K = self.trigger_outter_epochs
         t = self.trigger.clone()
         m = self.mask.clone()
+        t = t.to(device)
+        m = m.to(device)
         normal_grad = 0.
         count = 0
         for iter in range(K):
@@ -72,11 +76,12 @@ class Attacker:
                 adv_models = []
                 adv_ws = []
                 for _ in range(self.dm_adv_model_count):
-                    adv_model, adv_w = self.get_adv_model(model, dl, t, m)
+                    adv_model, adv_w = self.get_adv_model(model, dl, t, m,device)
                     adv_models.append(adv_model)
                     adv_ws.append(adv_w)
 
             for inputs, labels in dl:
+                inputs, labels = inputs.to(device), labels.to(device)
                 count += 1
                 t.requires_grad_()
                 inputs = t * m + (1 - m) * inputs
@@ -123,7 +128,7 @@ def RunAttack(net, trainLoader, epochs, global_model,attacker, device, verbose=F
     """
         Perform a single attack round on the local model.
         """
-    attacker.search_trigger(global_model, trainLoader)
+    attacker.search_trigger(global_model, trainLoader,device)
 
     mask = attacker.mask.detach().cpu().clone()
     trigger = attacker.trigger.detach().cpu().clone()
@@ -145,8 +150,8 @@ def RunAttack(net, trainLoader, epochs, global_model,attacker, device, verbose=F
         for inputs, labels in trainLoader:
 
             # Poison input batch
+            inputs, labels = inputs.to(device), labels.to(device)
             inputs, labels = attacker.poison_input(inputs, labels, eval=False)
-            inputs,labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = net(inputs)
             loss = ce_loss(outputs, labels)
