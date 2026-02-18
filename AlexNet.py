@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
-__all__ = ['alexnet','alexNetCifar','FashionMNIST_CNN','ResNet18']
+__all__ = ['alexnet','alexNetCifar','alexNetCifarBN','FashionMNIST_CNN','ResNet18','BatchNormModel','NonBatchNormModel']
 class AlexNet(nn.Module):
     def __init__(self, num=10):
         super(AlexNet, self).__init__()
@@ -64,6 +64,42 @@ class alexNetCifar(nn.Module):
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
         )
+        self.classifier = nn.Linear(256, num_classes)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return x
+
+class alexNetCifarBN(nn.Module):
+    def __init__(self, num_classes=10):
+        super(alexNetCifarBN, self).__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=5),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            nn.Conv2d(64, 192, kernel_size=5, padding=2),
+            nn.BatchNorm2d(192),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            nn.Conv2d(192, 384, kernel_size=3, padding=1),
+            nn.BatchNorm2d(384),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(384, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+        )
+
         self.classifier = nn.Linear(256, num_classes)
 
     def forward(self, x):
@@ -138,7 +174,6 @@ class BasicBlock(nn.Module):
         out = self.relu(out)
         return out
 
-
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -165,7 +200,6 @@ class Bottleneck(nn.Module):
         out += self.shortcut(x)
         out = self.relu(out)
         return out
-
 
 class ResNet(SimpleNet):
     def __init__(self, block, num_blocks, num_classes=10, name=None, created_time=None):
@@ -231,3 +265,79 @@ class ResNet(SimpleNet):
 
 def ResNet18(name=None, created_time=None, num_classes=10):
     return ResNet(BasicBlock, [2,2,2,2],name='{0}_ResNet_18'.format(name), created_time=created_time, num_classes=num_classes)
+
+
+class BatchNormModel(nn.Module):
+    def __init__(self, input_size=784, hidden_dim=256, output_size=10):
+        """
+        Creates a PyTorch net using the given parameters.
+
+        :param use_batch_norm: bool
+            Pass True to create a network that uses batch normalization; False otherwise
+            Note: this network will not use batch normalization on layers that do not have an
+            activation function.
+        """
+        super(BatchNormModel, self).__init__()  # init super
+
+        # Default layer sizes
+        self.input_size = input_size  # (28*28 images)
+        self.hidden_dim = hidden_dim
+        self.output_size = output_size  # (number of classes)
+
+        self.fc1 = nn.Linear(input_size, hidden_dim * 2, bias=False)
+        self.batch_norm1 = nn.BatchNorm1d(hidden_dim * 2)
+
+        # define *second* hidden linear layers, with optional batch norm on their outputs
+        self.fc2 = nn.Linear(hidden_dim * 2, hidden_dim, bias=False)
+        self.batch_norm2 = nn.BatchNorm1d(hidden_dim)
+
+        # third and final, fully-connected layer
+        self.fc3 = nn.Linear(hidden_dim, output_size)
+
+    def forward(self, x):
+        # flatten image
+        x = x.view(-1, 28 * 28)
+        # all hidden layers + optional batch norm + relu activation
+        x = self.fc1(x)
+        x = self.batch_norm1(x)
+        x = F.relu(x)
+        # second layer
+        x = self.fc2(x)
+        x = self.batch_norm2(x)
+        x = F.relu(x)
+        # third layer, no batch norm or activation
+        x = self.fc3(x)
+        return x
+
+class NonBatchNormModel(nn.Module):
+    def __init__(self, input_size=784, hidden_dim=256, output_size=10):
+        """
+        Creates a PyTorch net using the given parameters.
+
+        :param use_batch_norm: bool
+            Pass True to create a network that uses batch normalization; False otherwise
+            Note: this network will not use batch normalization on layers that do not have an
+            activation function.
+        """
+        super(NonBatchNormModel, self).__init__()  # init super
+
+        # Default layer sizes
+        self.input_size = input_size  # (28*28 images)
+        self.hidden_dim = hidden_dim
+        self.output_size = output_size  # (number of classes)
+        self.fc1 = nn.Linear(input_size, hidden_dim * 2)
+        self.fc2 = nn.Linear(hidden_dim * 2, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, output_size)
+
+    def forward(self, x):
+        # flatten image
+        x = x.view(-1, 28 * 28)
+        # all hidden layers + optional batch norm + relu activation
+        x = self.fc1(x)
+        x = F.relu(x)
+        # second layer
+        x = self.fc2(x)
+        x = F.relu(x)
+        # third layer, no batch norm or activation
+        x = self.fc3(x)
+        return x

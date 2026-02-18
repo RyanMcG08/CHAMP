@@ -16,10 +16,16 @@ def clean(file):
 def getModel(model_name):
     if model_name == 'alexnet':
         return alexNetCifar
-    if model_name == 'fashionMNISTCNN':
+    elif model_name == 'fashionMNISTCNN':
         return FashionMNIST_CNN
-    if model_name == 'resnet':
+    elif model_name == 'resnet':
         return ResNet18
+    elif model_name == "alexnetBN":
+        return alexNetCifarBN
+    elif model_name == "BatchNormOn":
+        return BatchNormModel
+    elif model_name == "BatchNormOff":
+        return NonBatchNormModel
 def getDataset(dataset_name):
     if dataset_name == 'cifar10':
         return CIFAR10
@@ -61,7 +67,7 @@ def parse_args():
     parser.add_argument("--asr", type=int, choices=[0,1], default=0, help="ASR flag (default: 0)")
     parser.add_argument("--percentages", nargs='*', type=float, default=[0.3,0.2,0.1,0.0,0.0,0.0], help="List of percentages")
     parser.add_argument("--cleanTog", type=int, choices=[0, 1], default=1, help="Clean flag (default: 1)")
-    parser.add_argument("--net",type=str, choices=["alexnet","fashionMNISTCNN","resnet"], default="fashionMNISTCNN", help="Model name (default: alexnet)")
+    parser.add_argument("--net",type=str, choices=["alexnet","alexnetBN","fashionMNISTCNN","resnet","BatchNormOff","BatchNormOn"], default="fashionMNISTCNN", help="Model name (default: alexnet)")
     parser.add_argument("--dataset", type=str, choices=["cifar10", "fashionMNIST"], default="fashionMNIST", help="Dataset name (default:Cifar10")
     parser.add_argument("--backdoor", type=str, choices=["one", "three", "five", "LetterR"], default="three", help="Backdoor Type (default: one)")
     parser.add_argument("--alpha", type=float, default=0, help="Parameter alpha for IID level (default: 0)")
