@@ -1,3 +1,5 @@
+import os
+
 from AlexNet import *
 import torch
 import copy
@@ -183,6 +185,10 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
         gAccs.append(gAcc)
 
         if save: torch.save(fed.state_dict(), file + "FederatedModels/Global"+str(round))
+        else:
+            if round == 0 and not os.path.exists(file+ "FederatedModels/"): os.makedirs(file + "FederatedModels/")
+            torch.save(fed.state_dict(), file + "FederatedModels/Global" + str(round))
+            if round != 0: os.remove(file + "FederatedModels/Global"+str(round-1))
 
         if round >= startMal-1 and adaptive == 1:
             if round % retrainPoint == 0:

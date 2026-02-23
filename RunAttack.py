@@ -173,7 +173,8 @@ if __name__ == '__main__':
 
     #Cleanup
     if cleanTog:
-        clean(headerFile + "trainloader")
+        if save:
+            clean(headerFile + "trainloader")
         try:
             clean(headerFile + "FederatedModels")
             clean(headerFile + "ReferenceModels")
