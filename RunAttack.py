@@ -77,6 +77,7 @@ def parse_args():
     parser.add_argument("--a3fl", type=int, default=0, help="toggle a3fl behaviour (default: 0)")
     parser.add_argument("--selection", type=str, default="fixed", help="aggregator selection (default: fixed)")
     parser.add_argument("--save", type=int, default=1, help="toggle saving models (default: 1)")
+    parser.add_argument("--percentage_bd", type=float, default=1.0, help="Percentage of backdoored samples in mal clients (default: 1.0)")
 
     args = parser.parse_args()
     # Convert 0/1 flags to booleans
@@ -125,6 +126,7 @@ if __name__ == '__main__':
     startMal = args.startMal
     a3fl = args.a3fl
     save = args.save
+    percentage_bd = args.percentage_bd
 
     print(args)
     headerFile = headerFile + "/"
@@ -133,7 +135,8 @@ if __name__ == '__main__':
         alpha = None
     # Load Data
     trainLoader, testLoader, malTrainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,
-                                                                 attack_type=attack_type, backdoor=backdoor,alpha=alpha)
+                                                                 attack_type=attack_type, backdoor=backdoor,alpha=alpha,
+                                                                 percentage_bd = percentage_bd)
 
     # Take Control of All Malicious Clients
     if numMal > 0:
@@ -143,7 +146,8 @@ if __name__ == '__main__':
         malLoader = None
 
     # Get the backdoored samples available to co-ordinated malicious clients
-    _, _, trainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,attack_type=attack_type,backdoor=backdoor,alpha=alpha)
+    _, _, trainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,attack_type=attack_type,backdoor=backdoor,
+                                           alpha=alpha,percentage_bd=percentage_bd)
 
     #Run Federated Learning
     g, gAccs, gLosses, gASR, accs, losses, selected, gpreds, cpreds, alphas = FedUtils.trainFedModel(trainLoader, testLoader, malLoader,
@@ -181,4 +185,3 @@ if __name__ == '__main__':
         except:
             for i in range(numClients):
                 os.remove(headerFile + "Client" + str(i) + ".csv")
-            os.remove(headerFile + "preds.csv")
