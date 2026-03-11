@@ -552,11 +552,7 @@ def dai(nets, threshold_quantile=0.1,numMal=1):
 
     fed = Avg(filtered_nets)
 
-    if any(i < numMal for i in benign_indices):
-        models = [benign_indices[i].item() for i in benign_indices if i < numMal]
-        return fed, models
-    else:
-        return fed, 0
+    return fed, benign_indices
 
 
 def robust_learning_rates_from_updates(updates, c=1.0, eps=1e-12):
