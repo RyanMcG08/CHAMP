@@ -53,11 +53,20 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
     :param lossFunc:
     :return:
     """
+    #combining testsets
+    datasets = [loader.dataset for loader in testLoader]
+    combined_dataset = ConcatDataset(datasets)
+
+    combined_loader = DataLoader(
+        combined_dataset,
+        batch_size=128,
+        shuffle=False
+    )
     if a3fl:
         # Initialize attacker
         adv_epochs = 5
         trigger_lr = 0.01
-        trigger_outter_epochs = 10
+        trigger_outter_epochs = 100
         dm_adv_K = 1
         dm_adv_model_count = 1
         noise_loss_lambda = 0.01
@@ -174,7 +183,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 selected.append(toggle)
         except:
             fed = getAgg(nets, scheme, trainLoader, param, global_model,numMal,round,file)
-        gLoss, gAcc = Training.testModel(fed, testLoader[0], "Federated Model on client 0 test data",verbose=verbose)
+        gLoss, gAcc = Training.testModel(fed, combined_loader, "Federated Model on test set",verbose=verbose)
         if malLoader != None and (attack_type == 1 or attack_type == 3):
             _, gASR = Training.testModel(fed, backdooredLoader, "Federated Model on all backdoored data in malicious clients",verbose=verbose, asr=True)
             gASRs.append(gASR)

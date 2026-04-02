@@ -5,8 +5,46 @@ from Utils import Training, DataAug, FedUtils, PlottingUtils
 from torch.utils.data import DataLoader,ConcatDataset
 from AlexNet import *
 import shutil
-from torchvision.datasets import CIFAR10, FashionMNIST
+from torchvision.datasets import CIFAR10, FashionMNIST, CIFAR100
+from datasets import load_dataset
+from torchvision import transforms
+from torch.utils.data import Dataset
 import argparse
+
+
+class TinyImageNet(Dataset):
+    def __init__(self, root=None, train=True, download=True, transform=None):
+        dataset_dict = load_dataset("zh-plus/tiny-imagenet")
+
+        if train:
+            self.data = dataset_dict["train"]
+        else:
+            self.data = dataset_dict["valid"]
+
+        self.transform = transform
+
+        # ✅ ADD THIS (torchvision compatibility)
+        self.targets = [item["label"] for item in self.data]
+
+        # Optional but nice (some codebases expect this)
+        try:
+            self.classes = self.data.features["label"].names
+        except:
+            self.classes = None
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        image = item["image"].convert("RGB")
+        label = item["label"]
+
+        if self.transform:
+            image = self.transform(image)
+
+        return image, label
+
 def clean(file):
     try:
         shutil.rmtree(file)
@@ -18,38 +56,62 @@ def getModel(model_name):
         return alexNetCifar
     elif model_name == 'fashionMNISTCNN':
         return FashionMNIST_CNN
-    elif model_name == 'resnet':
-        return ResNet18
+
+    elif model_name == 'cifar10':
+        return ResNet18_cifar10
+    elif model_name == 'cifar10BN':
+        return ResNet18_cifar10BN
+    elif model_name == 'cifar100':
+        return ResNet18_cifar100
+    elif model_name == 'cifar100BN':
+        return ResNet18_cifar100BN
+    elif model_name == 'imagenet':
+        return ResNet18_tinyImageNet
+    elif model_name == 'imagenetBN':
+        return ResNet18_tinyImageNetBN
+
+    elif model_name == 'resnetNoBN':
+        return ResNetNoBN
     elif model_name == "alexnetBN":
         return alexNetCifarBN
     elif model_name == "BatchNormOn":
         return BatchNormModel
     elif model_name == "BatchNormOff":
         return NonBatchNormModel
+    elif model_name == "alexNetImagenet":
+        return alexNetImagenet
+    elif model_name == "alexNetImagenetBN":
+        return alexNetImagenetBN
 def getDataset(dataset_name):
     if dataset_name == 'cifar10':
         return CIFAR10
-    if dataset_name == "fashionMNIST":
+    elif dataset_name == 'cifar100':
+        return CIFAR100
+    elif dataset_name == "fashionMNIST":
         return FashionMNIST
+    elif dataset_name == "imagenet":
+        return TinyImageNet
 def getBackdoor(backdoor):
     if backdoor == 'one':
         return DataAug.onebyone
-    if backdoor == 'three':
+    elif backdoor == 'three':
         return DataAug.threebythree
-    if backdoor == 'five':
+    elif backdoor == 'five':
         return DataAug.fivebyfive
-    if backdoor == "LetterR":
+    elif backdoor == "LetterR":
         return DataAug.letter_R
 
 def getLoss(loss_no):
     if loss_no == 0:
         lossFunc = Training.euclidean_dist
-    if loss_no == 1:
+    elif loss_no == 1:
         lossFunc = Training.huber_trimmed_loss
-    if loss_no == 2:
+    elif loss_no == 2:
         lossFunc = Training.cosine_similarity_loss
     return lossFunc
 def parse_args():
+    modelChoices = ["alexnet","alexnetBN","fashionMNISTCNN","resnet","BatchNormOff","BatchNormOn", "cifar10","cifar10BN","cifar100","cifar100BN",'ResNetNoBN',
+           'imagenet','imagenetBN','ResNet18_cifar10', 'ResNet18_tinyImageNet']
     parser = argparse.ArgumentParser(description="RunAttack script")
 
     parser.add_argument("--trainingRounds", type=int, default=50, help="Number of training rounds (default: 50)")
@@ -67,8 +129,8 @@ def parse_args():
     parser.add_argument("--asr", type=int, choices=[0,1], default=0, help="ASR flag (default: 0)")
     parser.add_argument("--percentages", nargs='*', type=float, default=[0.3,0.2,0.1,0.0,0.0,0.0], help="List of percentages")
     parser.add_argument("--cleanTog", type=int, choices=[0, 1], default=1, help="Clean flag (default: 1)")
-    parser.add_argument("--net",type=str, choices=["alexnet","alexnetBN","fashionMNISTCNN","resnet","BatchNormOff","BatchNormOn"], default="fashionMNISTCNN", help="Model name (default: alexnet)")
-    parser.add_argument("--dataset", type=str, choices=["cifar10", "fashionMNIST"], default="fashionMNIST", help="Dataset name (default:Cifar10")
+    parser.add_argument("--net",type=str, choices=modelChoices, default="fashionMNISTCNN", help="Model name (default: alexnet)")
+    parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100", "fashionMNIST", "imagenet"], default="fashionMNIST", help="Dataset name (default:Cifar10")
     parser.add_argument("--backdoor", type=str, choices=["one", "three", "five", "LetterR"], default="three", help="Backdoor Type (default: one)")
     parser.add_argument("--alpha", type=float, default=0, help="Parameter alpha for IID level (default: 0)")
     parser.add_argument("--lossFunc", type=int, default=0, help="Loss Function (default: 0)")
@@ -129,8 +191,6 @@ if __name__ == '__main__':
     print(args)
     headerFile = headerFile + "/"
     bDoorRefCount = percentages.count(0.0)
-    if alpha == 0:
-        alpha = None
     # Load Data
     trainLoader, testLoader, malTrainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,
                                                                  attack_type=attack_type, backdoor=backdoor,alpha=alpha)

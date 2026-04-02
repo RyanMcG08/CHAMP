@@ -95,7 +95,7 @@ def labelFlipping(indexes, dataset_, type):
 
 
 def getLoaders(numClients, numMal, size=50000, testSize=10000,
-               dataset=MNIST, attack_type=0, backdoor=letter_R, alpha=None):
+               dataset=MNIST, attack_type=0, backdoor=letter_R, alpha=0):
     """
     Gets train and test loaders for FL. Optionally applies Dirichlet-based partitioning (non-IID).
     :param numClients: Number of clients
@@ -114,12 +114,12 @@ def getLoaders(numClients, numMal, size=50000, testSize=10000,
     data = dataset("../dataset", train=True, download=True, transform=transform)
     dataT = dataset("../dataset", train=False, download=True, transform=transform)
 
-    data = Subset(data, list(range(size)))
-    dataT = Subset(dataT, list(range(testSize)))
+    data = Subset(data, list(range(data.__len__())))
+    dataT = Subset(dataT, list(range(dataT.__len__())))
 
-    if alpha is None:
+    if alpha == 0:
         # IID partitioning
-        XY_Train = random_split(data, [int(size / numClients) for _ in range(numClients)])
+        XY_Train = random_split(data, [int(data.__len__() / numClients) for _ in range(numClients)])
     else:
         # Dirichlet non-IID partitioning
         targets = np.array([data.dataset.targets[i] for i in data.indices])
@@ -128,7 +128,7 @@ def getLoaders(numClients, numMal, size=50000, testSize=10000,
             class_indices[label].append(idx)
 
         client_indices = [[] for _ in range(numClients)]
-        for c in range(10):
+        for c in range(200):
             indices = class_indices[c]
             np.random.shuffle(indices)
             proportions = np.random.dirichlet([alpha] * numClients)
@@ -139,10 +139,10 @@ def getLoaders(numClients, numMal, size=50000, testSize=10000,
 
         XY_Train = [Subset(data.dataset, client_indices[i]) for i in range(numClients)]
 
-    XY_Test = random_split(dataT, [int(testSize / numClients) for _ in range(numClients)])
+    XY_Test = random_split(dataT, [int(dataT.__len__() / numClients) for _ in range(numClients)])
 
-    train_loaders = [DataLoader(XY_Train[i], batch_size=64, shuffle=True) for i in range(numClients)]
-    test_loaders = [DataLoader(XY_Test[i], batch_size=64, shuffle=False) for i in range(numClients)]
+    train_loaders = [DataLoader(XY_Train[i], batch_size=64, shuffle=True,drop_last=True) for i in range(numClients)]
+    test_loaders = [DataLoader(XY_Test[i], batch_size=64, shuffle=False,drop_last=True) for i in range(numClients)]
 
     backdoored_samples = []
     for i in range(numMal):

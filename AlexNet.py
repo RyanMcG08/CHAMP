@@ -6,7 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
-__all__ = ['alexnet','alexNetCifar','alexNetCifarBN','FashionMNIST_CNN','ResNet18','BatchNormModel','NonBatchNormModel']
+__all__ = ['alexnet','alexNetCifar','alexNetCifarBN','FashionMNIST_CNN','ResNet18_cifar10BN','ResNet18_cifar100BN','ResNetNoBN',
+           'ResNet18_tinyImageNetBN','ResNet18_cifar100','ResNet18_cifar10', 'ResNet18_tinyImageNet','BatchNormModel','NonBatchNormModel', 'alexNetImagenet','alexNetImagenetBN']
 class AlexNet(nn.Module):
     def __init__(self, num=10):
         super(AlexNet, self).__init__()
@@ -44,7 +45,6 @@ class AlexNet(nn.Module):
 def alexnet(**kwargs):
     model = AlexNet(**kwargs)
     return model
-
 
 class alexNetCifar(nn.Module):
     def __init__(self, num_classes=10):
@@ -263,9 +263,111 @@ class ResNet(SimpleNet):
         x = self.relu(self.bn1(self.conv1(x)))
         return x
 
-def ResNet18(name=None, created_time=None, num_classes=10):
+def ResNet18_cifar10BN(name=None, created_time=None, num_classes=10):
     return ResNet(BasicBlock, [2,2,2,2],name='{0}_ResNet_18'.format(name), created_time=created_time, num_classes=num_classes)
 
+def ResNet18_cifar100BN(name=None, created_time=None, num_classes=100):
+    return ResNet(BasicBlock, [2,2,2,2],name='{0}_ResNet_18'.format(name), created_time=created_time, num_classes=num_classes)
+
+def ResNet18_tinyImageNetBN(name=None, created_time=None, num_classes=200):
+    return ResNet(BasicBlock, [2,2,2,2],name='{0}_ResNet_18'.format(name), created_time=created_time, num_classes=num_classes)
+
+class BasicBlockNoBN(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3,
+                               stride=stride, padding=1, bias=True)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3,
+                               stride=1, padding=1, bias=True)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, planes,
+                          kernel_size=1, stride=stride, bias=True)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.conv1(x))
+        out = self.conv2(out)
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+
+
+class ResNetNoBN(nn.Module):
+    def __init__(self, block, num_blocks, num_classes=10):
+        super().__init__()
+        self.in_planes = 32
+
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3,
+                               stride=1, padding=1, bias=True)
+
+        self.layer1 = self._make_layer(block, 32, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 64, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 128, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 256, num_blocks[3], stride=2)
+
+        self.relu = nn.ReLU(inplace=True)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.linear = nn.Linear(256 * block.expansion, num_classes)
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1]*(num_blocks - 1)
+        layers = []
+        for s in strides:
+            layers.append(block(self.in_planes, planes, s))
+            self.in_planes = planes * block.expansion
+        return nn.Sequential(*layers)
+
+    def switch_grads(self, enable=True):
+        for _, p in self.named_parameters():
+            p.requires_grad_(enable)
+
+    def features(self, x):
+        out = self.relu(self.conv1(x))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = out.view(out.size(0), -1)
+        return out
+
+    def forward(self, x):
+        out = self.relu(self.conv1(x))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.avgpool(out)
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
+    def forward_embedding(self, x):
+        out = self.relu(self.conv1(x))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.avgpool(out)
+        out = out.view(out.size(0), -1)
+        return out
+
+    def first_activations(self, x):
+        return self.relu(self.conv1(x))
+
+
+def ResNet18_cifar10():
+    return ResNetNoBN(BasicBlockNoBN, [2, 2, 2, 2], num_classes=10)
+
+def ResNet18_cifar100():
+    return ResNetNoBN(BasicBlockNoBN, [2,2,2,2], num_classes=100)
+
+def ResNet18_tinyImageNet():
+    return ResNetNoBN(BasicBlockNoBN, [2,2,2,2], num_classes=200)
 
 class BatchNormModel(nn.Module):
     def __init__(self, input_size=784, hidden_dim=256, output_size=10):
@@ -340,4 +442,217 @@ class NonBatchNormModel(nn.Module):
         x = F.relu(x)
         # third layer, no batch norm or activation
         x = self.fc3(x)
+        return x
+
+class VGG_BN(nn.Module):
+    def __init__(self, num_classes=1000):
+        super(VGG_BN, self).__init__()
+
+        self.features = nn.Sequential(
+            # Block 1
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            # Block 2
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            # Block 3
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            # Block 4
+            nn.Conv2d(256, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            # Block 5
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
+
+class VGG_NoBN(nn.Module):
+    def __init__(self, num_classes=1000):
+        super(VGG_NoBN, self).__init__()
+
+        self.features = nn.Sequential(
+            # Block 1
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            # Block 2
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            # Block 3
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            # Block 4
+            nn.Conv2d(256, 512, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+
+            # Block 5
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
+
+import torch
+import torch.nn as nn
+
+class alexNetImagenet(nn.Module):
+    def __init__(self, num_classes=200):
+        super(alexNetImagenet, self).__init__()
+
+        self.features = nn.Sequential(
+            # FIX: smaller kernel + stride
+            nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1),  # 64 → 32
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),                 # 32 → 16
+
+            nn.Conv2d(64, 192, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),                 # 16 → 8
+
+            nn.Conv2d(192, 384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(384, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),                 # 8 → 4
+        )
+
+        # 256 × 4 × 4 = 4096
+        self.classifier = nn.Linear(256 * 4 * 4, num_classes)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return x
+
+class alexNetImagenetBN(nn.Module):
+    def __init__(self, num_classes=200):
+        super(alexNetImagenetBN, self).__init__()
+
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            nn.Conv2d(64, 192, kernel_size=3, padding=1),
+            nn.BatchNorm2d(192),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+
+            nn.Conv2d(192, 384, kernel_size=3, padding=1),
+            nn.BatchNorm2d(384),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(384, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+        )
+
+        self.classifier = nn.Linear(256 * 4 * 4, num_classes)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
         return x

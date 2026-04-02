@@ -106,6 +106,7 @@ class Attacker:
                     t = new_t.detach_()
                     t = torch.clamp(t, min=-2, max=2)
                     t.requires_grad_()
+                    print(loss)
         t = t.detach()
         self.trigger = t
         self.mask = m
