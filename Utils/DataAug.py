@@ -95,7 +95,7 @@ def labelFlipping(indexes, dataset_, type):
 
 
 def getLoaders(numClients, numMal, size=50000, testSize=10000,
-               dataset=MNIST, attack_type=0, backdoor=letter_R, alpha=0):
+               dataset=MNIST, attack_type=0, backdoor=letter_R, alpha=0, bd_percent = 1):
     """
     Gets train and test loaders for FL. Optionally applies Dirichlet-based partitioning (non-IID).
     :param numClients: Number of clients
@@ -149,6 +149,7 @@ def getLoaders(numClients, numMal, size=50000, testSize=10000,
         indices = train_loaders[i].dataset.indices
         labels = torch.tensor(data.dataset.targets)[indices]
         indices_0 = [idx for idx, lbl in zip(indices, labels) if lbl == 0]
+        indices_0 = indices_0[:int((len(indices_0) * bd_percent))]
 
         if attack_type == 0:
             data.dataset = backdoorInsertion(indices_0, data.dataset, 0, backdoor)

@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
-__all__ = ['alexnet','alexNetCifar','alexNetCifarBN','FashionMNIST_CNN','ResNet18_cifar10BN','ResNet18_cifar100BN','ResNetNoBN',
+__all__ = ['alexnet','alexNetCifar','alexNetCifarBN','FashionMNIST_CNN','ResNet18_cifar10BN','ResNet18_cifar100BN','ResNetNoBN', 'ResNet18_fashionMNIST','ResNet18_fashionMNISTBN',
            'ResNet18_tinyImageNetBN','ResNet18_cifar100','ResNet18_cifar10', 'ResNet18_tinyImageNet','BatchNormModel','NonBatchNormModel', 'alexNetImagenet','alexNetImagenetBN']
 class AlexNet(nn.Module):
     def __init__(self, num=10):
@@ -263,6 +263,14 @@ class ResNet(SimpleNet):
         x = self.relu(self.bn1(self.conv1(x)))
         return x
 
+def ResNet18_fashionMNISTBN():
+    model = ResNetNoBN(BasicBlock, [2, 2, 2, 2], num_classes=10)
+
+    # Change first conv layer to accept 1 channel instead of 3
+    model.conv1 = nn.Conv2d(1, 32, kernel_size=3,
+                            stride=1, padding=1, bias=True)
+
+    return model
 def ResNet18_cifar10BN(name=None, created_time=None, num_classes=10):
     return ResNet(BasicBlock, [2,2,2,2],name='{0}_ResNet_18'.format(name), created_time=created_time, num_classes=num_classes)
 
@@ -360,6 +368,14 @@ class ResNetNoBN(nn.Module):
         return self.relu(self.conv1(x))
 
 
+def ResNet18_fashionMNIST():
+    model = ResNetNoBN(BasicBlockNoBN, [2, 2, 2, 2], num_classes=10)
+
+    # Change first conv layer to accept 1 channel instead of 3
+    model.conv1 = nn.Conv2d(1, 32, kernel_size=3,
+                            stride=1, padding=1, bias=True)
+
+    return model
 def ResNet18_cifar10():
     return ResNetNoBN(BasicBlockNoBN, [2, 2, 2, 2], num_classes=10)
 
