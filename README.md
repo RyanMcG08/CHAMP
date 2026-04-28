@@ -9,7 +9,7 @@ This tool allows you to simulate:
 - FL systems under attack by backdoor poisoning, with and without the adaptive attack champ
 
 ## Supplementary Demonstrations attached
-In this artifact we have attached a visualisation of our attack and for comparison a visualisation of a baseline backdoor poisoning attack, as two mp4 videos. Here, the malicious update is highlighted as a star and clients that have been included in the multi-krum robust 
+In this artifact we have attached a visualisation of our attack CHAMP and for comparison a visualisation of a BadNets backdoor poisoning attack, as an mp4 video. Here, the malicious update is highlighted as a star and clients that have been included in the multi-krum robust 
 aggregation scheme are highlighted in green. We can see our attack moving into the distribution of accepted updates by 
 the RA scheme, whereas a naive attacker cannot enter the set of accepted updates to the global model and therefore implements no poisoning.
 
@@ -50,13 +50,18 @@ Arguments:
 - alpha (int, default: 0): Parameter for Dirichlet distribution in non-IID data)
 - lossFunc (int, default: 0): Loss function metric 
 - lr (float, default: 0.1): Local client learning rate
+- startMal (int, default: 0): Starting round for malicious behaviour
+- a3fl (int, default: 0): Toggle for doing A3FL attacks, if 1, overrides "adaptive" as attackers behaviour
+- selection (str, default: "fixed"): Either "fixed" rate or "random" selection of malicious clients
+- save (int, default: 1): Toggle for saving output files during training
+- percentage_bd (float, default: 1.0): Fraction of source class samples to backdoor in malicious clients
 
 ## Further Details on Arguments:
 #### Param
 0. FedAvg 
 1. Median 
 2. Trimmed-Mean
-3. Krum/Mkrum
+3. Krum/Mkrum (vary the "param" to toggle multikrum or krum (param = 1 == Krum))
 4. Bulyan
 5. RFA
 6. Direction Alignment Inspection
@@ -93,7 +98,5 @@ letterR: Injects a Letter R trigger
 
 - Training logs, plots and metrics saved to the file --headerFile
 - Use --verbose 1 for detailed output during training
-- use --cleanTog 0 to keep all interim files (local models and reference models)
-- Training logs and metrics saved to the file --headerFile
-- Use --verbose 1 for detailed output during training
-- use --cleanTog 0 to save all interim files (local models and reference models)
+- Use --cleanTog 0 to keep all interim files (local models and reference models)
+- Use --save 0 to delete model files during training (this does not affect performance)
