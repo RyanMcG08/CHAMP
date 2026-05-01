@@ -95,7 +95,7 @@ def labelFlipping(indexes, dataset_, type):
 
 
 def getLoaders(numClients, numMal, size=50000, testSize=10000,
-               dataset=MNIST, attack_type=0, backdoor=letter_R, alpha=0, bd_percent = 1):
+               dataset=MNIST, attack_type=0, backdoor=letter_R, alpha=0, bd_percent = 1, bs = 64):
     """
     Gets train and test loaders for FL. Optionally applies Dirichlet-based partitioning (non-IID).
     :param numClients: Number of clients
@@ -141,8 +141,8 @@ def getLoaders(numClients, numMal, size=50000, testSize=10000,
 
     XY_Test = random_split(dataT, [int(dataT.__len__() / numClients) for _ in range(numClients)])
 
-    train_loaders = [DataLoader(XY_Train[i], batch_size=64, shuffle=True,drop_last=True) for i in range(numClients)]
-    test_loaders = [DataLoader(XY_Test[i], batch_size=64, shuffle=False,drop_last=True) for i in range(numClients)]
+    train_loaders = [DataLoader(XY_Train[i], batch_size=bs, shuffle=True,drop_last=True) for i in range(numClients)]
+    test_loaders = [DataLoader(XY_Test[i], batch_size=bs, shuffle=False,drop_last=True) for i in range(numClients)]
 
     backdoored_samples = []
     for i in range(numMal):
@@ -164,12 +164,12 @@ def getLoaders(numClients, numMal, size=50000, testSize=10000,
     if backdoored_samples:
         all_backdoored = [i for sub in backdoored_samples for i in sub]
         trainloader_data = Subset(data.dataset, all_backdoored)
-        trainloader = DataLoader(trainloader_data, batch_size=64, shuffle=False)
+        trainloader = DataLoader(trainloader_data, batch_size=bs, shuffle=False)
         return train_loaders, test_loaders, trainloader
     else:
         return train_loaders, test_loaders, None
 
-def getReferenceLoaders(trainloader, numRefs, percentages,dataset=MNIST,attack_type=0,backdoor=letter_R):
+def getReferenceLoaders(trainloader, numRefs, percentages,dataset=MNIST,attack_type=0,backdoor=letter_R, bs = 64):
     """
     Gets the trainloader and testloader from the dataset. Backdoors a specific number of clients.
     :param trainloader: trainloader to build reference models from
@@ -195,7 +195,7 @@ def getReferenceLoaders(trainloader, numRefs, percentages,dataset=MNIST,attack_t
 
     train_loaders = []
     for i in range(numRefs):
-        train_loaders.append(torch.utils.data.DataLoader(XY_Train[i], batch_size=64, shuffle=False))
+        train_loaders.append(torch.utils.data.DataLoader(XY_Train[i], batch_size=bs, shuffle=False))
 
     for i in range(numRefs):
         subset_indices = train_loaders[i].dataset.indices

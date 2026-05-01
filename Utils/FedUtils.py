@@ -17,7 +17,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                   C=1,kernel="poly",tol=1e-3,lr = 0.1,dataset=MNIST,bDoorRefCount = 1,
                   scheme = 0, param=0, adaptive=False, r=10, adaptiveInterval = 1,attack_type=0,delta=1,asr=False,
                   backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,a3fl = False,
-                  selection = "fixed",save = True,bd_percent = 1):
+                  selection = "fixed",save = True,bd_percent = 1, batch_size = 32):
     """
     Runner that runs the federated learning system
     :param trainLoader: Set of trainloaders
@@ -222,7 +222,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                                                                           dataset=dataset,backdoor=backdoor,save=save)
                     malLoader = None
                     _, _, backdooredLoader = DataAug.getLoaders(numClients, int(numClients/2), dataset=dataset,
-                                                                attack_type=attack_type, bd_percent=bd_percent)
+                                                                attack_type=attack_type, bd_percent=bd_percent, bs=batch_size)
 
                 # Get feature vectors from reference models across backdoored samples and reference models across backdoored samples
                 refFVS, refLabels = Training.getFVS(refNets, backdooredLoader, training=True,bDoorRefCount=bDoorRefCount)
