@@ -6,44 +6,44 @@ from torch.utils.data import DataLoader,ConcatDataset
 from AlexNet import *
 import shutil
 from torchvision.datasets import CIFAR10, FashionMNIST, CIFAR100, MNIST
-from datasets import load_dataset
+#from datasets import load_dataset
 from torchvision import transforms
 from torch.utils.data import Dataset
 import argparse
-
-
-class TinyImageNet(Dataset):
-    def __init__(self, root=None, train=True, download=True, transform=None):
-        dataset_dict = load_dataset("zh-plus/tiny-imagenet")
-
-        if train:
-            self.data = dataset_dict["train"]
-        else:
-            self.data = dataset_dict["valid"]
-
-        self.transform = transform
+import torch.nn as nn
+import csv
+#class TinyImageNet(Dataset):
+#    def __init__(self, root=None, train=True, download=True, transform=None):
+#        dataset_dict = load_dataset("zh-plus/tiny-imagenet")#
+#
+#        if train:
+#            self.data = dataset_dict["train"]
+#        else:
+#            self.data = dataset_dict["valid"]
+#
+#        self.transform = transform
 
         # ✅ ADD THIS (torchvision compatibility)
-        self.targets = [item["label"] for item in self.data]
+#        self.targets = [item["label"] for item in self.data]
 
         # Optional but nice (some codebases expect this)
-        try:
-            self.classes = self.data.features["label"].names
-        except:
-            self.classes = None
+#        try:
+#            self.classes = self.data.features["label"].names
+#        except:
+#            self.classes = None
 
-    def __len__(self):
-        return len(self.data)
+#    def __len__(self):
+#        return len(self.data)
 
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        image = item["image"].convert("RGB")
-        label = item["label"]
+ #   def __getitem__(self, idx):
+ #       item = self.data[idx]
+ #       image = item["image"].convert("RGB")
+ #       label = item["label"]
 
-        if self.transform:
-            image = self.transform(image)
+#        if self.transform:
+#            image = self.transform(image)
 
-        return image, label
+#        return image, label
 
 def clean(file):
     try:
@@ -98,8 +98,8 @@ def getDataset(dataset_name):
         return CIFAR100
     elif dataset_name == "fashionMNIST":
         return FashionMNIST
-    elif dataset_name == "imagenet":
-        return TinyImageNet
+#    elif dataset_name == "imagenet":
+#        return TinyImageNet
     elif dataset_name == "mnist":
         return MNIST
 def getBackdoor(backdoor):
@@ -176,7 +176,7 @@ if __name__ == '__main__':
     np.random.seed(42)
     torch.manual_seed(42)
     args = parse_args()
-
+    verbose = True
     trainingRounds = args.trainingRounds
     numClients = args.numClients
     numMal = args.numMal
@@ -204,59 +204,45 @@ if __name__ == '__main__':
     bd_percent = args.bd_percent
     batch_size = args.batch_size
     print(args)
-    headerFile = headerFile + "/"
     bDoorRefCount = percentages.count(0.0)
+
     # Load Data
     trainLoader, testLoader, malTrainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,
                                                                  attack_type=attack_type, backdoor=backdoor,alpha=alpha,
                                                                  bd_percent=bd_percent, bs=batch_size)
 
-    # Take Control of All Malicious Clients
-    if numMal > 0:
-        malDataset = ConcatDataset(loader.dataset for loader in trainLoader[:numMal])
-        malLoader = DataLoader(malDataset, batch_size=64, shuffle=False)
-    else:
-        malLoader = None
+    criterion = nn.CrossEntropyLoss()
+    model = net().to(device)
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    accs = []
+    losses = []
+    accs_t = []
+    losses_t = []
+    accs_m = []
+    losses_m = []
+    for epoch in range(epochs):
+        model.train()
 
-    # Get the backdoored samples available to co-ordinated malicious clients
-    _, _, trainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,attack_type=attack_type,backdoor=backdoor,alpha=alpha,
-                                           bd_percent=bd_percent, bs=batch_size)
+        for images, labels in trainLoader[0]:
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs,labels)
+            loss.backward()
+            optimizer.step()
 
-    g, gAccs, gLosses, gASR, accs, losses, selected, gpreds, cpreds, alphas = FedUtils.trainFedModel(trainLoader, testLoader, malLoader,
-                                                                   numClients, trainloader, trainingRounds, epochs,
-                                                                   percentages,device,numMal,file=headerFile,
-                                                                   verbose=verbose, model=net(),lr=lr,
-                                                                   dataset=dataset,bDoorRefCount=bDoorRefCount,
-                                                                   scheme=scheme, param=param,adaptive=adaptive,
-                                                                   r=r,adaptiveInterval=ai, attack_type=attack_type,
-                                                                   asr=asr,backdoor=backdoor,lossFunc=lossFunc,
-                                                                                                     startMal=startMal,
-                                                                                                     a3fl=a3fl,save=save,
-                                                                                                     bd_percent = bd_percent,
-                                                                                                     batch_size = batch_size)
+        acc, loss = Training.testModel(model, trainLoader[0], "Train", verbose)
+        acc_t,loss_t= Training.testModel(model, testLoader[0], "Test", verbose)
+        acc_m, loss_m = Training.testModel(model, malTrainloader, "Test", verbose)
+        accs.append(acc)
+        losses.append(loss)
+        accs_t.append(loss_t)
+        losses_t.append(acc_t)
+        accs_m.append(loss_m)
+        losses_m.append(acc_m)
 
-    if numMal > 0: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses, gpreds,cpreds,selected, alphas,file=headerFile)
-    else: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses,gpreds,cpreds,selected, alphas,file=headerFile, ben=True)
-
-    if os.path.exists(headerFile + "plots"):
-        shutil.rmtree(headerFile + "plots")
-    os.makedirs(headerFile + "plots")
-
-
-    PlottingUtils.AIPlots(gAccs, gASR, gLosses, accs, losses, epochs, file=headerFile + "plots/")
-    if cpreds != []:
-        PlottingUtils.plotMI(headerFile, numClients)
-    if selected != []:
-        PlottingUtils.plotSelected(headerFile,selected,gASR,gpreds)
-
-    #Cleanup
-    if cleanTog:
-        if save:
-            clean(headerFile + "trainloader")
-        try:
-            clean(headerFile + "FederatedModels")
-            clean(headerFile + "ReferenceModels")
-        except:
-            for i in range(numClients):
-                os.remove(headerFile + "Client" + str(i) + ".csv")
-            os.remove(headerFile + "preds.csv")
+    with open(headerFile + '.csv', mode='w', newline='') as file_:
+        writer = csv.writer(file_)
+        writer.writerow(['Accs', 'Losses', 'testingAccs', 'testingLosses', 'bdAccs', 'bdLosses'])
+        for acc, loss, asr, sel, alp, boo in zip(accs, losses, accs_t, losses_t, accs_m,losses_m):
+            writer.writerow([acc, loss, asr, sel, alp, boo])

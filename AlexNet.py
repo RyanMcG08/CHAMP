@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import torch
 
 __all__ = ['alexnet','alexNetCifar','alexNetCifarBN','FashionMNIST_CNN','ResNet18_cifar10BN','ResNet18_cifar100BN','ResNetNoBN', 'ResNet18_fashionMNIST','ResNet18_fashionMNISTBN',
-           'ResNet18_tinyImageNetBN','ResNet18_cifar100','ResNet18_cifar10', 'ResNet18_tinyImageNet','BatchNormModel','NonBatchNormModel', 'alexNetImagenet','alexNetImagenetBN']
+           'ResNet18_tinyImageNetBN','ResNet18_cifar100','ResNet18_cifar10', 'ResNet18_tinyImageNet','BatchNormModel','NonBatchNormModel', 'alexNetImagenet','alexNetImagenetBN','VGG16','ResNet18_cifar10_GN','ResNet18_cifar10_LN']
 class AlexNet(nn.Module):
     def __init__(self, num=10):
         super(AlexNet, self).__init__()
@@ -672,3 +672,125 @@ class alexNetImagenetBN(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
         return x
+
+def conv_layer(chann_in, chann_out, k_size, p_size):
+    layer = nn.Sequential(
+        nn.Conv2d(chann_in, chann_out, kernel_size=k_size, padding=p_size),
+        nn.BatchNorm2d(chann_out),
+        nn.ReLU()
+    )
+    return layer
+
+def vgg_conv_block(in_list, out_list, k_list, p_list, pooling_k, pooling_s):
+
+    layers = [ conv_layer(in_list[i], out_list[i], k_list[i], p_list[i]) for i in range(len(in_list)) ]
+    layers += [ nn.MaxPool2d(kernel_size = pooling_k, stride = pooling_s)]
+    return nn.Sequential(*layers)
+
+def vgg_fc_layer(size_in, size_out):
+    layer = nn.Sequential(
+        nn.Linear(size_in, size_out),
+        nn.BatchNorm1d(size_out),
+        nn.ReLU()
+    )
+    return layer
+
+class VGG16(nn.Module):
+    def __init__(self, n_classes=200):
+        super(VGG16, self).__init__()
+
+        # Conv blocks (BatchNorm + ReLU activation added in each block)
+        self.layer1 = vgg_conv_block([3,64], [64,64], [3,3], [1,1], 2, 2)
+        self.layer2 = vgg_conv_block([64,128], [128,128], [3,3], [1,1], 2, 2)
+        self.layer3 = vgg_conv_block([128,256,256], [256,256,256], [3,3,3], [1,1,1], 2, 2)
+        self.layer4 = vgg_conv_block([256,512,512], [512,512,512], [3,3,3], [1,1,1], 2, 2)
+        self.layer5 = vgg_conv_block([512,512,512], [512,512,512], [3,3,3], [1,1,1], 2, 2)
+
+        # FC layers
+        self.layer6 = vgg_fc_layer(7*7*512, 4096)
+        self.layer7 = vgg_fc_layer(4096, 4096)
+
+        # Final layer
+        self.layer8 = nn.Linear(4096, n_classes)
+
+    def forward(self, x):
+        out = self.layer1(x)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        vgg16_features = self.layer5(out)
+        out = vgg16_features.view(out.size(0), -1)
+        out = self.layer6(out)
+        out = self.layer7(out)
+        out = self.layer8(out)
+
+        return vgg16_features, out
+
+
+def ResNet18_cifar10_GN(num_classes=10, groups=8):
+    class BasicBlockGN(nn.Module):
+        expansion = 1
+
+        def __init__(self, in_planes, planes, stride=1):
+            super().__init__()
+
+            self.conv1 = nn.Conv2d(in_planes, planes, 3, stride, 1, bias=False)
+            self.gn1 = nn.GroupNorm(groups, planes)
+
+            self.conv2 = nn.Conv2d(planes, planes, 3, 1, 1, bias=False)
+            self.gn2 = nn.GroupNorm(groups, planes)
+
+            self.shortcut = nn.Sequential()
+            if stride != 1 or in_planes != planes:
+                self.shortcut = nn.Sequential(
+                    nn.Conv2d(in_planes, planes, 1, stride, bias=False),
+                    nn.GroupNorm(groups, planes)
+                )
+
+        def forward(self, x):
+            out = F.relu(self.gn1(self.conv1(x)))
+            out = self.gn2(self.conv2(out))
+            out += self.shortcut(x)
+            out = F.relu(out)
+            return out
+
+    return ResNetNoBN(BasicBlockGN, [2, 2, 2, 2], num_classes=num_classes)
+def ResNet18_cifar10_LN(num_classes=10):
+    class LayerNorm2d(nn.Module):
+        def __init__(self, num_channels):
+            super().__init__()
+            self.ln = nn.LayerNorm(num_channels)
+
+        def forward(self, x):
+            x = x.permute(0, 2, 3, 1)
+            x = self.ln(x)
+            x = x.permute(0, 3, 1, 2)
+            return x
+
+    class BasicBlockLN(nn.Module):
+        expansion = 1
+
+        def __init__(self, in_planes, planes, stride=1):
+            super().__init__()
+
+            self.conv1 = nn.Conv2d(in_planes, planes, 3, stride, 1, bias=False)
+            self.ln1 = LayerNorm2d(planes)
+
+            self.conv2 = nn.Conv2d(planes, planes, 3, 1, 1, bias=False)
+            self.ln2 = LayerNorm2d(planes)
+
+            self.shortcut = nn.Sequential()
+            if stride != 1 or in_planes != planes:
+                self.shortcut = nn.Sequential(
+                    nn.Conv2d(in_planes, planes, 1, stride, bias=False),
+                    LayerNorm2d(planes)
+                )
+
+        def forward(self, x):
+            out = F.relu(self.ln1(self.conv1(x)))
+            out = self.ln2(self.conv2(out))
+            out += self.shortcut(x)
+            out = F.relu(out)
+            return out
+
+    return ResNetNoBN(BasicBlockLN, [2, 2, 2, 2], num_classes=num_classes)

@@ -317,6 +317,8 @@ def getAgg(nets, scheme, trainloader, param,g,numMal,round,file):
         return aggregate_with_rlr(nets,g)
     elif scheme == 8:
         return aggregate_with_foolsgold(nets,g)
+    elif scheme == 9:
+        return flame(nets,g)
     else:
         assert "No Valid Aggregation Scheme Selected"
 def weightedAvg(nets, trainLoaders):
@@ -720,3 +722,146 @@ def getAvASR(asrs, r):
         running_average += asrs[-i]
     running_average /= (r*100)
     return 1 - running_average
+
+import copy
+import numpy as np
+import torch
+import hdbscan
+from sklearn.metrics.pairwise import cosine_distances
+
+
+def flatten_model(model):
+    return torch.cat([
+        p.detach().cpu().view(-1)
+        for p in model.parameters()
+    ])
+
+
+def flame(nets, global_model, noise_multiplier=0.001):
+    """
+    FLAME aggregation.
+
+    Parameters
+    ----------
+    nets : list
+        Client models.
+    global_model : nn.Module
+        Previous global model.
+    noise_multiplier : float
+        FLAME noise parameter.
+
+    Returns
+    -------
+    nn.Module
+        New global model.
+    """
+
+    global_vec = flatten_model(global_model)
+
+    updates = []
+    norms = []
+
+    # ----------------------------------
+    # Compute client updates
+    # ----------------------------------
+    for net in nets:
+        update = flatten_model(net) - global_vec
+
+        updates.append(update)
+        norms.append(torch.norm(update).item())
+
+    updates = torch.stack(updates)
+    norms = np.array(norms)
+
+    # ----------------------------------
+    # HDBSCAN clustering
+    # ----------------------------------
+    distance_matrix = cosine_distances(
+        updates.cpu().numpy().astype(np.float64)
+    ).astype(np.float64)
+
+    clusterer = hdbscan.HDBSCAN(
+        metric="precomputed",
+        min_cluster_size=max(2, len(nets) // 2)
+    )
+
+    labels = clusterer.fit_predict(distance_matrix)
+
+    valid = labels != -1
+
+    if np.sum(valid) == 0:
+        benign_idx = np.arange(len(nets))
+    else:
+        unique, counts = np.unique(
+            labels[valid],
+            return_counts=True
+        )
+
+        largest_cluster = unique[np.argmax(counts)]
+
+        benign_idx = np.where(
+            labels == largest_cluster
+        )[0]
+
+    benign_updates = updates[benign_idx]
+    benign_norms = norms[benign_idx]
+
+    # ----------------------------------
+    # Norm clipping
+    # ----------------------------------
+    clipping_bound = np.median(benign_norms)
+
+    clipped_updates = []
+
+    for update in benign_updates:
+
+        norm = torch.norm(update)
+
+        if norm > clipping_bound:
+            update = update * (
+                clipping_bound / (norm + 1e-12)
+            )
+
+        clipped_updates.append(update)
+
+    clipped_updates = torch.stack(clipped_updates)
+
+    # ----------------------------------
+    # Average clipped updates
+    # ----------------------------------
+    aggregated_update = clipped_updates.mean(dim=0)
+
+    # ----------------------------------
+    # Gaussian noise
+    # ----------------------------------
+    noise_std = clipping_bound * noise_multiplier
+
+    noise = torch.randn_like(
+        aggregated_update
+    ) * noise_std
+
+    aggregated_update += noise
+
+    # ----------------------------------
+    # Construct new global model
+    # ----------------------------------
+    new_global = copy.deepcopy(global_model)
+
+    idx = 0
+
+    with torch.no_grad():
+        for param in new_global.parameters():
+
+            numel = param.numel()
+
+            update_chunk = aggregated_update[
+                idx:idx + numel
+            ].view_as(param)
+
+            param.copy_(
+                param + update_chunk.to(param.device)
+            )
+
+            idx += numel
+
+    return new_global, int(labels[0]+1)
