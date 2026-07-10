@@ -152,6 +152,8 @@ def parse_args():
     parser.add_argument("--save", type=int, default=1, help="toggle saving models (default: 1)")
     parser.add_argument("--bd_percent", type=float, default=1, help="percentage to backdoor")
     parser.add_argument("--batch_size", type=int, default=64, help="batch size")
+    parser.add_argument("--lira", type=int, default=0, help="Lira (offline toggle)")
+
 
     args = parser.parse_args()
     # Convert 0/1 flags to booleans
@@ -203,6 +205,7 @@ if __name__ == '__main__':
     save = args.save
     bd_percent = args.bd_percent
     batch_size = args.batch_size
+    lira = args.lira
     print(args)
     headerFile = headerFile + "/"
     bDoorRefCount = percentages.count(0.0)
@@ -221,6 +224,16 @@ if __name__ == '__main__':
     # Get the backdoored samples available to co-ordinated malicious clients
     _, _, trainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,attack_type=attack_type,backdoor=backdoor,alpha=alpha,
                                            bd_percent=bd_percent, bs=batch_size)
+    detector = None
+    if lira == 1:
+        from Utils.Lira import LiraBackdoorDetector, BackdoorConfig, LiraConfig
+
+        detector = LiraBackdoorDetector(
+            model_fn=net,
+            backdoor_cfg=BackdoorConfig(poison_frac=0.1, target_label=1),
+            lira_cfg=LiraConfig(n_shadow=2, epochs=15), # 8 15
+        )
+        detector.fit(malLoader,dataset)
 
     g, gAccs, gLosses, gASR, accs, losses, selected, gpreds, cpreds, alphas = FedUtils.trainFedModel(trainLoader, testLoader, malLoader,
                                                                    numClients, trainloader, trainingRounds, epochs,
@@ -233,7 +246,8 @@ if __name__ == '__main__':
                                                                                                      startMal=startMal,
                                                                                                      a3fl=a3fl,save=save,
                                                                                                      bd_percent = bd_percent,
-                                                                                                     batch_size = batch_size)
+                                                                                                     batch_size = batch_size,
+                                                                                                     detector = detector)
 
     if numMal > 0: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses, gpreds,cpreds,selected, alphas,file=headerFile)
     else: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses,gpreds,cpreds,selected, alphas,file=headerFile, ben=True)

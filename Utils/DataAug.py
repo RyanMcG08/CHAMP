@@ -300,3 +300,8 @@ def SaveData(gAccs,gASRs,gLosses,accs,losses,gpreds,cpreds,selected,alphas,file=
             writer.writerow([f"client{i}" for i in range(1, len(cpreds[0]) + 1)] + ["global"])
             for row in data_:
                 writer.writerow(row)
+
+def getoriginal(dataloader):
+
+
+    return dataloader

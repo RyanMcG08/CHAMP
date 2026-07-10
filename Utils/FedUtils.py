@@ -11,13 +11,13 @@ from Utils import Training, DataAug, FedUtils, PlottingUtils, A3fl
 from itertools import cycle
 import numpy as np
 import random
-
+from Utils.Lira import LiraBackdoorDetector, BackdoorConfig, LiraConfig
 def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoader,trainingRounds,epochs,
                   percentages, device, numMal, file = "", verbose = True,retrainPoint=1,model=alexnet(),
                   C=1,kernel="poly",tol=1e-3,lr = 0.1,dataset=MNIST,bDoorRefCount = 1,
                   scheme = 0, param=0, adaptive=False, r=10, adaptiveInterval = 1,attack_type=0,delta=1,asr=False,
                   backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,a3fl = False,
-                  selection = "fixed",save = True,bd_percent = 1, batch_size = 32):
+                  selection = "fixed",save = True,bd_percent = 1, batch_size = 32, detector = None):
     """
     Runner that runs the federated learning system
     :param trainLoader: Set of trainloaders
@@ -107,13 +107,15 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 if verbose:
                     print(f"Training Local Model {i+1}")
                 if i < numMal and round > 0 and adaptive is True and (round+1) % adaptiveInterval == 0 and a3fl == False:
-                    alpha = getAvMI(gpreds,r)
+                    if detector == None: alpha = getAvMI(gpreds,r)
+                    else: alpha = 1 - detector.predict_proba(fed)
+
                     if asr:
                         alpha = getAvASR(gASRs,r)
                     if verbose:
                         print(f"Alpha {alpha}")
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
-                                                   file + "FederatedModels/Model" + str(i) + str(round),
+                                                   file + "FederatedModels/Model" + str(i) + "_" + str(round),
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
                                                     delta=delta,lossFunc=lossFunc,save=save)
                 elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
@@ -122,12 +124,15 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                     backdoor = [mask,trigger]
                 else:
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
-                                                    file + "FederatedModels/Model" + str(i) + str(round),
+                                                    file + "FederatedModels/Model" + str(i) + "_" + str(round),
                                                     False,verbose=verbose,lr=lr,save=save)
                 losses[i].append(loss)
                 accs[i].append(acc)
-            if alpha == -1 and (round+1) % adaptiveInterval == 0:
-                alpha = getAvMI(gpreds, r)
+            if alpha == -1 and (round+1) % adaptiveInterval == 0 and round > 0:
+                if detector == None:
+                    alpha = getAvMI(gpreds, r)
+                else:
+                    alpha = 1 - detector.predict_proba(fed)
         else:
             if round < startMal:
                 Clients = random.sample(range(numMal,100), 10)
@@ -140,13 +145,16 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 if verbose:
                     print(f"Training Local Model {i+1}")
                 if i < numMal and round > 0 and adaptive is True and (round+1) % adaptiveInterval == 0:
-                    alpha = getAvMI(gpreds,r)
+                    if detector == None:
+                        alpha = getAvMI(gpreds, r)
+                    else:
+                        alpha = 1 - detector.predict_proba(fed)
                     if asr:
                         alpha = getAvASR(gASRs,r)
                     if verbose:
                         print(f"Alpha {alpha}")
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
-                                                   file + "FederatedModels/Model" + str(i) + str(round),
+                                                   file + "FederatedModels/Model" + str(i) + "_" + str(round),
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
                                                     delta=delta,lossFunc=lossFunc,save=save)
                 elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
@@ -155,12 +163,15 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                     backdoor = [mask, trigger]
                 else:
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
-                                                    file + "FederatedModels/Model" + str(i) + str(round),
+                                                    file + "FederatedModels/Model" + str(i) + "_" + str(round),
                                                     False,verbose=verbose,lr=lr,save=save)
                 losses[i].append(loss)
                 accs[i].append(acc)
-            if alpha == -1 and (round+1) % adaptiveInterval == 0:
-                alpha = getAvMI(gpreds, r)
+            if alpha == -1 and (round+1) % adaptiveInterval == 0 and round > 1:
+                if detector == None:
+                    alpha = getAvMI(gpreds, r)
+                else:
+                    alpha =  1- detector.predict_proba(fed)
         alphas.append(alpha)
         nets_ = []
         if Clients != []:
@@ -199,7 +210,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
             torch.save(fed.state_dict(), file + "FederatedModels/Global" + str(round))
             if round != 0: os.remove(file + "FederatedModels/Global"+str(round-1))
 
-        if round >= startMal-1 and adaptive == 1:
+        if round >= startMal-1 and adaptive == 1 and detector == None:
             if round % retrainPoint == 0:
                 if verbose:
                     print("Training Reference Models")
@@ -243,6 +254,17 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                     for client in Clients:
                         cpreds_.append((np.sum(client_preds[client]) / len(client_preds[client])) * 100)
                     cpreds.append(cpreds_)
+        elif round >= startMal-1 and adaptive == 1 and detector != None:
+            if round % retrainPoint == 0:
+
+                print(f'global has a {detector.predict_proba(fed) * 100:.2f}% chance of being malicious')
+                gpreds.append(detector.predict_proba(fed))
+                cpreds_ = []
+
+                for client in Clients:
+                    print(f'Client {client} has a {detector.predict_proba(nets[client]) * 100:.2f}% chance of being malicious')
+                    cpreds_.append(detector.predict_proba(nets[client]))
+                cpreds.append(cpreds_)
 
     if save: pickle.dump(backdooredLoader, open(file + "trainloader", "wb"))
 
@@ -781,8 +803,9 @@ def flame(nets, global_model, noise_multiplier=0.001):
     ).astype(np.float64)
 
     clusterer = hdbscan.HDBSCAN(
-        metric="precomputed",
-        min_cluster_size=max(2, len(nets) // 2)
+        min_cluster_size=len(nets) // 2 + 1,
+        min_samples=1,
+        allow_single_cluster=True
     )
 
     labels = clusterer.fit_predict(distance_matrix)
@@ -864,4 +887,4 @@ def flame(nets, global_model, noise_multiplier=0.001):
 
             idx += numel
 
-    return new_global, int(labels[0]+1)
+    return new_global, np.where(labels == 0)[0]
