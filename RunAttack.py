@@ -230,12 +230,15 @@ if __name__ == '__main__':
 
         detector = LiraBackdoorDetector(
             model_fn=net,
-            backdoor_cfg=BackdoorConfig(poison_frac=0.1, target_label=1),
-            lira_cfg=LiraConfig(n_shadow=2, epochs=15), # 8 15
+            backdoor_cfg=BackdoorConfig(poison_frac=[0.1,0.2], target_label=1),
+            lira_cfg=LiraConfig(n_shadow=4, epochs=15), # 8 15
         )
         detector.fit(malLoader,dataset)
-
-        detector.save("checkpoints/lira_detector.pt")
+        if save:
+            dir_ = os.path.dirname(headerFile)
+            if dir_ and not os.path.exists(dir_):
+                os.makedirs(dir_)
+        detector.save(headerFile + "lira_detector.pt")
 
     g, gAccs, gLosses, gASR, accs, losses, selected, gpreds, cpreds, alphas = FedUtils.trainFedModel(trainLoader, testLoader, malLoader,
                                                                    numClients, trainloader, trainingRounds, epochs,
