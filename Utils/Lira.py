@@ -10,31 +10,13 @@ each model's confidence when shown triggered inputs. The resulting
 detector can then be pointed at a *new* model to estimate whether it was
 trained with a backdoor.
 
-Typical usage
--------------
-    from lira import LiraBackdoorDetector, BackdoorConfig, LiraConfig
-
-    def model_fn():
-        return MyCNN()
-
-    detector = LiraBackdoorDetector(
-        model_fn=model_fn,
-        backdoor_cfg=BackdoorConfig(poison_frac=0.1, target_label=0),
-        lira_cfg=LiraConfig(n_shadow=32, epochs=15),
-    )
-    detector.fit(train_loader)                 # trains shadow models
-
-    llr = detector.predict_llr(some_model)      # log-likelihood ratio
-    prob = detector.predict_proba(some_model)   # P(model is backdoored)
-    is_bd = detector.predict(some_model)        # bool
-
 This is intended for auditing / defensive research (e.g. checking whether
 a model you've received or trained has a backdoor), not for tuning an
 attack to evade detection.
 """
 
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -54,14 +36,14 @@ from torch.utils.data import DataLoader, ConcatDataset
 def default_3x3_x_trigger(x: torch.Tensor, patch_value: float = 1.0,
                            corner: Optional[Tuple[int, int]] = None) -> torch.Tensor:
     """
-    Stamp a 3x3 'X' pattern into the bottom-right corner of each image.
+    Stamp a 3x3 solid patch into the image.
 
     x: (N, C, H, W) tensor, values expected in [0, 1].
     Returns a new tensor (input is not modified in place).
     """
     x = x.clone()
 
-    r0, c0 = 1,1
+    r0, c0 = 1, 1
 
     x[..., r0:r0+3, c0:c0+3] = patch_value
 
@@ -108,9 +90,13 @@ def poison_batch(
 @dataclass
 class BackdoorConfig:
     trigger_fn: Callable[[torch.Tensor], torch.Tensor] = default_3x3_x_trigger
-    poison_frac: float = 0.1     # fraction of a backdoored shadow model's data that's poisoned
-    source_label: int = 0        # label the trigger is meant to force
-    target_label: int = 1
+    # Either a single fraction applied to every "IN" shadow model, or a
+    # sequence of fractions that get distributed round-robin across the
+    # IN shadow models (e.g. [0.2, 0.3, 0.5] with 15 IN shadows gives
+    # 5 shadows trained at each fraction).
+    poison_frac: Union[float, Sequence[float]] = 0.1
+    source_label: int = 0        # label whose samples get poisoned
+    target_label: int = 1        # label the trigger is meant to force
 
 
 @dataclass
@@ -224,15 +210,18 @@ class LiraBackdoorDetector:
 
         self.in_scores: Optional[np.ndarray] = None
         self.out_scores: Optional[np.ndarray] = None
+        # Parallel to in_scores: which poison_frac produced each IN score.
+        # Useful for inspecting how detectability varies with poison rate.
+        self.in_fracs_used: Optional[np.ndarray] = None
         self._fitted = False
 
     # -- internals --------------------------------------------------
 
     def _prepare_query_set(self):
         """
-        Build a fixed set of clean query images (excluding the target
-        label) that will be triggered and used to probe every shadow
-        model and every model scored later.
+        Build a fixed set of clean query images (the source-label class)
+        that will be triggered and used to probe every shadow model and
+        every model scored later.
         """
         source_label = self.backdoor_cfg.source_label
         target_label = self.backdoor_cfg.target_label
@@ -251,18 +240,91 @@ class LiraBackdoorDetector:
         self.query_x = self.pool_x[sel].clone()
         self.query_y_target = torch.full((n,), target_label, dtype=torch.long)
 
-    def _train_shadow(self, is_backdoored: bool) -> nn.Module:
+    def _poison_frac_schedule(self, n_backdoored: int) -> List[float]:
+        """
+        Build the list of poison fractions to apply across the
+        n_backdoored "IN" shadow models.
+
+        If backdoor_cfg.poison_frac is a single float, every IN shadow
+        gets that fraction (original behavior).
+
+        If it's a sequence, e.g. [0.2, 0.3, 0.5], the IN shadow models
+        are assigned fractions round-robin so each value gets used as
+        evenly as possible -- with n_backdoored=15 and 3 fractions,
+        that's 5 shadows per fraction; with 16 and 3 fractions, it's
+        6/5/5.
+        """
+        pf = self.backdoor_cfg.poison_frac
+        if isinstance(pf, (list, tuple, np.ndarray)):
+            fracs = list(pf)
+        else:
+            fracs = [pf]
+        return [fracs[i % len(fracs)] for i in range(n_backdoored)]
+
+    def _default_poison_frac(self) -> float:
+        """Fallback fraction used when _train_shadow(True) is called directly
+        without an explicit poison_frac (e.g. ad-hoc sanity checks)."""
+        pf = self.backdoor_cfg.poison_frac
+        if isinstance(pf, (list, tuple, np.ndarray)):
+            return float(pf[0])
+        return float(pf)
+
+    def _fit_in_distributions(self) -> dict:
+        """
+        Fit one Gaussian per distinct poison_frac used among the IN
+        (backdoored) shadow models, rather than pooling all IN scores
+        into a single Gaussian.
+
+        Per-fraction means are used as-is, but the standard deviation is
+        pooled ("global variance" trick) across all fractions -- each
+        group's scores are centered on its own mean, then all residuals
+        are combined into one std estimate. This matters because with
+        e.g. 16 IN shadows split across 3 fractions, each group only has
+        ~5 samples, too few to estimate a per-group std reliably on its
+        own.
+
+        Returns: dict mapping poison_frac -> (mu, sigma)
+        """
+        fracs = self.in_fracs_used
+        scores = self.in_scores
+
+        if fracs is None or len(fracs) == 0:
+            raise RuntimeError("No IN shadow scores available; call fit() first.")
+
+        unique_fracs = np.unique(fracs)
+
+        means = {}
+        residuals = []
+        for f in unique_fracs:
+            group = scores[fracs == f]
+            mu = float(group.mean())
+            means[f] = mu
+            if len(group) > 1:
+                residuals.append(group - mu)
+
+        if residuals:
+            pooled = np.concatenate(residuals)
+            global_sigma_in = float(pooled.std() + 1e-6)
+        else:
+            # Fallback: not enough samples anywhere to pool residuals
+            global_sigma_in = float(scores.std() + 1e-6)
+
+        return {float(f): (means[f], global_sigma_in) for f in unique_fracs}
+
+    def _train_shadow(self, is_backdoored: bool,
+                       poison_frac: Optional[float] = None) -> nn.Module:
         n = len(self.pool_x)
         subset_size = min(self.cfg.shadow_subset_size, n)
         idx = np.random.choice(n, subset_size, replace=False)
         x, y = self.pool_x[idx], self.pool_y[idx]
 
         if is_backdoored:
+            frac = poison_frac if poison_frac is not None else self._default_poison_frac()
             x, y = poison_batch(
                 x,
                 y,
                 self.backdoor_cfg.trigger_fn,
-                self.backdoor_cfg.poison_frac,
+                frac,
                 self.backdoor_cfg.source_label,
                 self.backdoor_cfg.target_label,
             )
@@ -275,7 +337,7 @@ class LiraBackdoorDetector:
         return float(conf.mean())
 
     # -- public API ---------------------------------------------------
-    def getOriginal(self, loader,clean_dataset):
+    def getOriginal(self, loader, clean_dataset):
         transform = transforms.Compose([transforms.ToTensor()])
         # Re-download the clean dataset
         clean_dataset = clean_dataset("../dataset", train=True, download=True, transform=transform)
@@ -298,14 +360,18 @@ class LiraBackdoorDetector:
             pin_memory=loader.pin_memory,
             drop_last=loader.drop_last,
         )
-    def fit(self, dataloader,dataset, verbose: bool = True) -> "LiraBackdoorDetector":
+
+    def fit(self, dataloader, dataset, verbose: bool = True) -> "LiraBackdoorDetector":
         """
-        dataloader: a torch DataLoader yielding (x, y) batches of clean
-        training data. All data is materialized into an in-memory pool
-        used both to build shadow-model training subsets and the fixed
-        query set used to probe models with the trigger.
+        dataloader: a torch DataLoader over the (possibly backdoored)
+        malicious-client samples. Its underlying dataset must be a
+        ConcatDataset of Subsets so the original indices can be
+        recovered against `dataset`.
+        dataset: the original torchvision dataset class (e.g.
+        torchvision.datasets.MNIST) used to look up unpoisoned
+        originals of the same samples.
         """
-        dataloader = self.getOriginal(dataloader,dataset)
+        dataloader = self.getOriginal(dataloader, dataset)
         if self.cfg.seed is not None:
             torch.manual_seed(self.cfg.seed)
             np.random.seed(self.cfg.seed)
@@ -313,27 +379,101 @@ class LiraBackdoorDetector:
         self.pool_x, self.pool_y = extract_pool(dataloader)
         self._prepare_query_set()
 
+        # How many shadow models will be "IN" (backdoored) given the
+        # alternating s % 2 == 0 assignment below.
+        n_backdoored = sum(1 for s in range(self.cfg.n_shadow) if s % 2 == 0)
+        frac_schedule = self._poison_frac_schedule(n_backdoored)
+
         in_scores, out_scores = [], []
+        in_fracs_used = []
+        bd_counter = 0
+
         for s in range(self.cfg.n_shadow):
             is_backdoored = (s % 2 == 0)
-            model = self._train_shadow(is_backdoored)
-            conf = self._trigger_confidence(model)
-            (in_scores if is_backdoored else out_scores).append(conf)
 
-            if verbose:
-                tag = "IN (backdoored)" if is_backdoored else "OUT (clean)"
-                print(f"[lira] shadow {s + 1}/{self.cfg.n_shadow} [{tag}] "
-                      f"trigger->target confidence: {conf:.3f}")
+            if is_backdoored:
+                frac = frac_schedule[bd_counter]
+                bd_counter += 1
+                model = self._train_shadow(True, poison_frac=frac)
+                conf = self._trigger_confidence(model)
+                in_scores.append(conf)
+                in_fracs_used.append(frac)
+                if verbose:
+                    print(f"[lira] shadow {s + 1}/{self.cfg.n_shadow} "
+                          f"[IN backdoored, poison_frac={frac}] "
+                          f"trigger->target confidence: {conf:.3f}")
+            else:
+                model = self._train_shadow(False)
+                conf = self._trigger_confidence(model)
+                out_scores.append(conf)
+                if verbose:
+                    print(f"[lira] shadow {s + 1}/{self.cfg.n_shadow} "
+                          f"[OUT clean] trigger->target confidence: {conf:.3f}")
 
         self.in_scores = np.array(in_scores)
         self.out_scores = np.array(out_scores)
+        self.in_fracs_used = np.array(in_fracs_used)
         self._fitted = True
         return self
+
+    def state_dict(self) -> dict:
+        """
+        Everything needed to reconstruct a fitted detector, minus the
+        shadow models themselves (which aren't kept around after fit()
+        anyway -- only their derived confidence scores are).
+        """
+        return {
+            "in_scores": self.in_scores,
+            "out_scores": self.out_scores,
+            "in_fracs_used": self.in_fracs_used,
+            "query_x": self.query_x,
+            "query_y_target": self.query_y_target,
+            "backdoor_cfg": self.backdoor_cfg,
+            "cfg": self.cfg,
+            "_fitted": self._fitted,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        self.in_scores = state["in_scores"]
+        self.out_scores = state["out_scores"]
+        self.in_fracs_used = state["in_fracs_used"]
+        self.query_x = state["query_x"]
+        self.query_y_target = state["query_y_target"]
+        self.backdoor_cfg = state["backdoor_cfg"]
+        self.cfg = state["cfg"]
+        self._fitted = state["_fitted"]
+
+    def save(self, path: str) -> None:
+        """Save the fitted detector state to disk (via torch.save)."""
+        if not self._fitted:
+            raise RuntimeError("Detector isn't fitted yet -- call fit() before save().")
+        torch.save(self.state_dict(), path)
+
+    @classmethod
+    def load(cls, path: str, model_fn: Callable[[], nn.Module]) -> "LiraBackdoorDetector":
+        """
+        Reload a previously saved detector. `model_fn` must be supplied
+        again since it's a live callable (not something we saved) --
+        pass the same architecture factory used at fit() time so
+        predict_llr() etc. can be called on new models of that type.
+
+        Note: torch.load with weights_only=False will unpickle arbitrary
+        objects (including backdoor_cfg.trigger_fn). Only load files you
+        saved yourself / trust.
+        """
+        state = torch.load(path, weights_only=False)
+        detector = cls(
+            model_fn=model_fn,
+            backdoor_cfg=state["backdoor_cfg"],
+            lira_cfg=state["cfg"],
+        )
+        detector.load_state_dict(state)
+        return detector
 
     def predict_llr(self, model: nn.Module) -> float:
         """Log-likelihood ratio that `model` is backdoored vs clean."""
         if not self._fitted:
-            raise RuntimeError("Call .fit(dataloader) before scoring a model.")
+            raise RuntimeError("Call .fit(dataloader, dataset) before scoring a model.")
 
         q = self._trigger_confidence(model)
         mu_in, sigma_in = self.in_scores.mean(), self.in_scores.std() + 1e-6
@@ -352,16 +492,77 @@ class LiraBackdoorDetector:
         """Boolean call: is `model` backdoored? (LLR > threshold)"""
         return self.predict_llr(model) > threshold
 
-    def evaluate(self, models: List[nn.Module], labels: List[bool]) -> dict:
+    def predict_llr_stratified(self, model: nn.Module) -> Tuple[float, float]:
+        """
+        Score a model against each per-poison_frac IN distribution
+        separately (rather than one pooled IN Gaussian), and return the
+        best (max) log-likelihood ratio vs. the OUT distribution, along
+        with which poison_frac it best matches.
+
+        This is the recommended scoring method when
+        BackdoorConfig.poison_frac was a list/range during fit(): a
+        single pooled Gaussian over IN scores spanning several poison
+        rates can end up wide or even bimodal, which weakens the LLR
+        test. Fitting one Gaussian per fraction and taking the best
+        match avoids that, at the cost of not knowing in advance which
+        fraction (if any) the query model used -- we just report
+        whichever hypothesis explains the observed confidence best.
+
+        Returns: (best_llr, best_matching_poison_frac)
+        """
+        if not self._fitted:
+            raise RuntimeError("Call .fit(dataloader, dataset) before scoring a model.")
+
+        in_dists = self._fit_in_distributions()
+        mu_out, sigma_out = self.out_scores.mean(), self.out_scores.std() + 1e-6
+
+        q = self._trigger_confidence(model)
+        ll_out = stats.norm.logpdf(q, mu_out, sigma_out)
+
+        best_llr = -np.inf
+        best_frac = None
+        for frac, (mu_in, sigma_in) in in_dists.items():
+            ll_in = stats.norm.logpdf(q, mu_in, sigma_in)
+            llr = ll_in - ll_out
+            if llr > best_llr:
+                best_llr = llr
+                best_frac = frac
+
+        return float(best_llr), float(best_frac)
+
+    def predict_proba_stratified(self, model: nn.Module) -> float:
+        """Sigmoid of the stratified (best-fraction-match) LLR."""
+        llr, _ = self.predict_llr_stratified(model)
+        return float(1 / (1 + np.exp(-llr)))
+
+    def predict_stratified(self, model: nn.Module, threshold: float = 0.0) -> bool:
+        """Boolean call using the stratified LLR: is `model` backdoored?"""
+        llr, _ = self.predict_llr_stratified(model)
+        return llr > threshold
+
+    def evaluate(self, models: List[nn.Module], labels: List[bool],
+                 stratified: bool = False) -> dict:
         """
         Evaluate detector AUC against a labeled set of held-out models.
         labels[i] = True if models[i] is backdoored.
-        Requires scikit-learn.
+
+        stratified=True uses predict_llr_stratified (per-fraction
+        Gaussians, best match) instead of the pooled predict_llr --
+        generally the better choice when poison_frac was a range during
+        fit(). Requires scikit-learn.
         """
         from sklearn.metrics import roc_auc_score
-        scores = [self.predict_llr(m) for m in models]
-        auc = roc_auc_score(labels, scores)
-        return {"auc": auc, "scores": scores}
+
+        if stratified:
+            results = [self.predict_llr_stratified(m) for m in models]
+            scores = [llr for llr, _ in results]
+            fracs = [frac for _, frac in results]
+            auc = roc_auc_score(labels, scores)
+            return {"auc": auc, "scores": scores, "best_matching_fracs": fracs}
+        else:
+            scores = [self.predict_llr(m) for m in models]
+            auc = roc_auc_score(labels, scores)
+            return {"auc": auc, "scores": scores}
 
 
 # ---------------------------------------------------------------
@@ -381,27 +582,21 @@ if __name__ == "__main__":
             nn.Linear(128, 10),
         )
 
-    transform = T.Compose([T.ToTensor()])
-    train_set = torchvision.datasets.MNIST(root="./data", train=True,
-                                            download=True, transform=transform)
-
-    # Use a modest subset as the "pool" DataLoader for a quick demo.
-    subset = torch.utils.data.Subset(train_set, range(5000))
-    train_loader = torch.utils.data.DataLoader(subset, batch_size=256, shuffle=False)
-
+    # Example: split IN shadow models evenly across three poison rates.
     detector = LiraBackdoorDetector(
         model_fn=model_fn,
-        backdoor_cfg=BackdoorConfig(poison_frac=0.1, target_label=0),
+        backdoor_cfg=BackdoorConfig(poison_frac=[0.2, 0.3, 0.5],
+                                     source_label=0, target_label=1),
         lira_cfg=LiraConfig(n_shadow=16, epochs=10, shadow_subset_size=1500),
     )
-    detector.fit(train_loader)
 
-    # Train one known-backdoored and one known-clean model to sanity check.
-    print("\n=== Sanity check on two freshly trained models ===")
-    bd_model = detector._train_shadow(is_backdoored=True)
-    clean_model = detector._train_shadow(is_backdoored=False)
-
-    print(f"Backdoored model  -> LLR={detector.predict_llr(bd_model):.2f}, "
-          f"P(backdoored)={detector.predict_proba(bd_model):.3f}")
-    print(f"Clean model       -> LLR={detector.predict_llr(clean_model):.2f}, "
-          f"P(backdoored)={detector.predict_proba(clean_model):.3f}")
+    # detector.fit(malicious_loader, torchvision.datasets.MNIST)
+    #
+    # After fitting, detector.in_fracs_used lines up with detector.in_scores
+    # so you can inspect how confidence separation changes with poison_frac.
+    #
+    # Scoring a new model:
+    #   detector.predict_llr(model)              # pooled IN Gaussian (all fracs mixed)
+    #   detector.predict_llr_stratified(model)    # per-fraction Gaussians, best match
+    #       -> (llr, best_matching_poison_frac)
+    #   detector.evaluate(models, labels, stratified=True)  # AUC using stratified scoring

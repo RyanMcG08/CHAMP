@@ -235,6 +235,8 @@ if __name__ == '__main__':
         )
         detector.fit(malLoader,dataset)
 
+        detector.save("checkpoints/lira_detector.pt")
+
     g, gAccs, gLosses, gASR, accs, losses, selected, gpreds, cpreds, alphas = FedUtils.trainFedModel(trainLoader, testLoader, malLoader,
                                                                    numClients, trainloader, trainingRounds, epochs,
                                                                    percentages,device,numMal,file=headerFile,
