@@ -160,8 +160,11 @@ def accuracy(model: nn.Module, x: torch.Tensor, y: torch.Tensor,
 
 def train_model(model_fn: Callable[[], nn.Module],
                  train_x: torch.Tensor, train_y: torch.Tensor,
-                 cfg: LiraConfig) -> nn.Module:
+                 cfg: LiraConfig,
+                 init_state_dict: Optional[dict] = None) -> nn.Module:
     model = model_fn().to(cfg.device)
+    if init_state_dict is not None:
+        model.load_state_dict(init_state_dict)
     opt = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9)
     ds = torch.utils.data.TensorDataset(train_x, train_y)
     loader = torch.utils.data.DataLoader(ds, batch_size=cfg.batch_size, shuffle=True)
@@ -214,6 +217,37 @@ class LiraBackdoorDetector:
         # Useful for inspecting how detectability varies with poison rate.
         self.in_fracs_used: Optional[np.ndarray] = None
         self._fitted = False
+
+        # Optional warm-start checkpoint: if set, every shadow model
+        # begins training from these weights instead of a fresh random
+        # init. Use set_init_model() to populate this.
+        self.init_state_dict: Optional[dict] = None
+
+    def set_init_model(self, model) -> None:
+        """
+        Provide a starting-point model for shadow-model training, so
+        shadow models fine-tune from these weights instead of training
+        from scratch. This matches realistic FL threat models, where a
+        malicious client fine-tunes the current global model for a few
+        local epochs rather than training a fresh model.
+
+        `model` can be an nn.Module (its state_dict() is captured) or
+        an already-extracted state_dict.
+        """
+        if isinstance(model, nn.Module):
+            # Store a CPU copy so it isn't tied to whatever device the
+            # passed-in model happened to be on.
+            self.init_state_dict = {k: v.detach().clone().cpu()
+                                     for k, v in model.state_dict().items()}
+        elif isinstance(model, dict):
+            self.init_state_dict = {k: v.detach().clone().cpu()
+                                     for k, v in model.items()}
+        else:
+            raise TypeError("set_init_model expects an nn.Module or a state_dict.")
+
+    def clear_init_model(self) -> None:
+        """Revert to training shadow models from scratch (random init)."""
+        self.init_state_dict = None
 
     # -- internals --------------------------------------------------
 
@@ -328,7 +362,8 @@ class LiraBackdoorDetector:
                 self.backdoor_cfg.source_label,
                 self.backdoor_cfg.target_label,
             )
-        return train_model(self.model_fn, x, y, self.cfg)
+        return train_model(self.model_fn, x, y, self.cfg,
+                            init_state_dict=self.init_state_dict)
 
     def _trigger_confidence(self, model: nn.Module) -> float:
         """Mean logit-scaled confidence on target_label for triggered query images."""
@@ -360,6 +395,21 @@ class LiraBackdoorDetector:
             pin_memory=loader.pin_memory,
             drop_last=loader.drop_last,
         )
+
+    def load_pool(self, dataloader, dataset) -> None:
+        """
+        Repopulate self.pool_x / self.pool_y from a malicious-client
+        loader (same format as fit() expects), without touching the
+        already-fitted in_scores / out_scores / query set.
+
+        Useful after LiraBackdoorDetector.load(...): the saved state
+        deliberately excludes the training pool (it can be large and
+        isn't needed just to score already-trained models), so methods
+        that train NEW shadow models on demand -- e.g. for an
+        evaluate() sanity check -- need the pool restored first.
+        """
+        recovered_loader = self.getOriginal(dataloader, dataset)
+        self.pool_x, self.pool_y = extract_pool(recovered_loader)
 
     def fit(self, dataloader, dataset, verbose: bool = True) -> "LiraBackdoorDetector":
         """
@@ -421,27 +471,46 @@ class LiraBackdoorDetector:
         Everything needed to reconstruct a fitted detector, minus the
         shadow models themselves (which aren't kept around after fit()
         anyway -- only their derived confidence scores are).
+
+        Numpy arrays are converted to plain Python lists before saving.
+        This avoids pickle embedding a reference to numpy's internal
+        module layout (e.g. numpy._core vs numpy.core, which changed in
+        numpy 2.0) -- saving/loading across different numpy versions or
+        environments would otherwise risk a ModuleNotFoundError on load.
+
+        Note: if set_init_model() was used, the warm-start checkpoint
+        (full model weights) is included here too, which can noticeably
+        increase the saved file size compared to a from-scratch detector.
         """
+        def _to_list(a):
+            return a.tolist() if a is not None else None
+
         return {
-            "in_scores": self.in_scores,
-            "out_scores": self.out_scores,
-            "in_fracs_used": self.in_fracs_used,
+            "in_scores": _to_list(self.in_scores),
+            "out_scores": _to_list(self.out_scores),
+            "in_fracs_used": _to_list(self.in_fracs_used),
             "query_x": self.query_x,
             "query_y_target": self.query_y_target,
             "backdoor_cfg": self.backdoor_cfg,
             "cfg": self.cfg,
             "_fitted": self._fitted,
+            "init_state_dict": self.init_state_dict,
         }
 
     def load_state_dict(self, state: dict) -> None:
-        self.in_scores = state["in_scores"]
-        self.out_scores = state["out_scores"]
-        self.in_fracs_used = state["in_fracs_used"]
+        def _to_array(a):
+            return np.array(a) if a is not None else None
+
+        self.in_scores = _to_array(state["in_scores"])
+        self.out_scores = _to_array(state["out_scores"])
+        self.in_fracs_used = _to_array(state["in_fracs_used"])
         self.query_x = state["query_x"]
         self.query_y_target = state["query_y_target"]
         self.backdoor_cfg = state["backdoor_cfg"]
         self.cfg = state["cfg"]
         self._fitted = state["_fitted"]
+        # Backwards-compatible: older saved files won't have this key.
+        self.init_state_dict = state.get("init_state_dict")
 
     def save(self, path: str) -> None:
         """Save the fitted detector state to disk (via torch.save)."""
@@ -450,24 +519,43 @@ class LiraBackdoorDetector:
         torch.save(self.state_dict(), path)
 
     @classmethod
-    def load(cls, path: str, model_fn: Callable[[], nn.Module]) -> "LiraBackdoorDetector":
+    def load(cls, path: str, model_fn: Callable[[], nn.Module],
+              map_location: Optional[str] = "cpu") -> "LiraBackdoorDetector":
         """
         Reload a previously saved detector. `model_fn` must be supplied
         again since it's a live callable (not something we saved) --
         pass the same architecture factory used at fit() time so
         predict_llr() etc. can be called on new models of that type.
 
+        map_location controls what device saved tensors (query_x,
+        query_y_target) get loaded onto. Defaults to "cpu" so a detector
+        saved on a CUDA machine can still be loaded on a CPU-only
+        machine without crashing; pass map_location=None to use
+        torch.load's default behavior instead, or "cuda" to force GPU.
+
+        After loading, self.cfg.device is also set to match map_location
+        (when it's a concrete device string) so scoring methods stay
+        consistent with where the tensors actually live.
+
         Note: torch.load with weights_only=False will unpickle arbitrary
         objects (including backdoor_cfg.trigger_fn). Only load files you
         saved yourself / trust.
         """
-        state = torch.load(path, weights_only=False)
+        state = torch.load(path, map_location=map_location, weights_only=False)
         detector = cls(
             model_fn=model_fn,
             backdoor_cfg=state["backdoor_cfg"],
             lira_cfg=state["cfg"],
         )
         detector.load_state_dict(state)
+
+        if map_location is not None:
+            detector.cfg.device = map_location
+            if detector.query_x is not None:
+                detector.query_x = detector.query_x.to(map_location)
+            if detector.query_y_target is not None:
+                detector.query_y_target = detector.query_y_target.to(map_location)
+
         return detector
 
     def predict_llr(self, model: nn.Module) -> float:

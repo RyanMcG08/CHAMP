@@ -255,16 +255,21 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                         cpreds_.append((np.sum(client_preds[client]) / len(client_preds[client])) * 100)
                     cpreds.append(cpreds_)
         elif round >= startMal-1 and adaptive == 1 and detector != None:
-            if round % retrainPoint == 0:
+            print(f'global has a {detector.predict_proba(fed) * 100:.2f}% chance of being malicious')
+            gpreds.append(detector.predict_proba(fed))
+            cpreds_ = []
 
-                print(f'global has a {detector.predict_proba(fed) * 100:.2f}% chance of being malicious')
-                gpreds.append(detector.predict_proba(fed))
-                cpreds_ = []
+            for client in Clients:
+                print(f'Client {client} has a {detector.predict_proba(nets[client]) * 100:.2f}% chance of being malicious')
+                cpreds_.append(detector.predict_proba(nets[client]))
+            cpreds.append(cpreds_)
 
-                for client in Clients:
-                    print(f'Client {client} has a {detector.predict_proba(nets[client]) * 100:.2f}% chance of being malicious')
-                    cpreds_.append(detector.predict_proba(nets[client]))
-                cpreds.append(cpreds_)
+            if round % retrainPoint == 0 and retrainPoint > 0:
+                detector.set_init_model(fed)
+
+                detector.fit(malLoader, dataset)
+
+                detector.save(file + "lira_detector" + str(round) + ".pt")
 
     if save: pickle.dump(backdooredLoader, open(file + "trainloader", "wb"))
 
@@ -888,3 +893,38 @@ def flame(nets, global_model, noise_multiplier=0.001):
             idx += numel
 
     return new_global, np.where(labels == 0)[0]
+
+def aggregate_with_bn(nets, trainLoaders, robust_weight_agg, share_bn_stats: bool):
+    """
+    Aggregate client models. Weights always go through the robust aggregator.
+    BN buffers are either synchronized (share_bn_stats=True) or left untouched
+    on each client (share_bn_stats=False) — never silently copied from nets[0].
+    :param nets: list of client models
+    :param trainLoaders: list of client train loaders (for weighting)
+    :param robust_weight_agg: fn(nets) -> aggregated weight state (Krum/trimmed-mean/RFA/etc.)
+    :param share_bn_stats: whether to synchronize BN running stats across clients
+    :return: aggregated model (weights) — plus, if share_bn_stats, a synced buffer state
+             to broadcast; if not, clients keep their own buffers locally.
+    """
+    fed = copy.deepcopy(nets[0])
+
+    # Weights: always through the robust rule, never plain FedAvg
+    robust_weight_agg(fed, nets)
+
+    if share_bn_stats:
+        num_samples = [len(loader.dataset) for loader in trainLoaders]
+        total_samples = sum(num_samples)
+        with torch.no_grad():
+            fed_buffers = list(fed.buffers())
+            for i, buf in enumerate(fed_buffers):
+                if 'num_batches_tracked' in list(fed.named_buffers())[i][0]:
+                    continue  # counter, not a stat to average
+                buf.zero_()
+                for model, samples in zip(nets, num_samples):
+                    model_buf = list(model.buffers())[i]
+                    buf.add_((samples / total_samples) * model_buf)
+        # fed's buffers are now the shared reference stats to broadcast to every client
+    # else: share_bn_stats=False — fed's buffers are irrelevant; each client keeps
+    # updating its own local buffers during its own local training, untouched here.
+
+    return fed

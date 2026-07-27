@@ -153,6 +153,7 @@ def parse_args():
     parser.add_argument("--bd_percent", type=float, default=1, help="percentage to backdoor")
     parser.add_argument("--batch_size", type=int, default=64, help="batch size")
     parser.add_argument("--lira", type=int, default=0, help="Lira (offline toggle)")
+    parser.add_argument("--retrainPoint", type=int, default=0, help="retrain point")
 
 
     args = parser.parse_args()
@@ -209,6 +210,7 @@ if __name__ == '__main__':
     print(args)
     headerFile = headerFile + "/"
     bDoorRefCount = percentages.count(0.0)
+    retrainPoint = args.retrainPoint
     # Load Data
     trainLoader, testLoader, malTrainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,
                                                                  attack_type=attack_type, backdoor=backdoor,alpha=alpha,
@@ -230,14 +232,17 @@ if __name__ == '__main__':
 
         detector = LiraBackdoorDetector(
             model_fn=net,
-            backdoor_cfg=BackdoorConfig(poison_frac=[0.1,0.2], target_label=1),
-            lira_cfg=LiraConfig(n_shadow=4, epochs=15), # 8 15
+            backdoor_cfg=BackdoorConfig(poison_frac=[0.05,0.1,0.2,0.4,0.6,0.8,0.9,0.95], target_label=1),
+            lira_cfg=LiraConfig(n_shadow=32, epochs=15), # 8 15
+
+            #backdoor_cfg=BackdoorConfig(poison_frac=[0.05, 0.95], target_label=1),
+            #lira_cfg=LiraConfig(n_shadow=2, epochs=1), # 8 15
         )
         detector.fit(malLoader,dataset)
-        if save:
-            dir_ = os.path.dirname(headerFile)
-            if dir_ and not os.path.exists(dir_):
-                os.makedirs(dir_)
+        dir_ = os.path.dirname(headerFile)
+        if dir_ and not os.path.exists(dir_):
+            os.makedirs(dir_)
+
         detector.save(headerFile + "lira_detector.pt")
 
     g, gAccs, gLosses, gASR, accs, losses, selected, gpreds, cpreds, alphas = FedUtils.trainFedModel(trainLoader, testLoader, malLoader,
@@ -252,7 +257,8 @@ if __name__ == '__main__':
                                                                                                      a3fl=a3fl,save=save,
                                                                                                      bd_percent = bd_percent,
                                                                                                      batch_size = batch_size,
-                                                                                                     detector = detector)
+                                                                                                     detector = detector,
+                                                                                                     retrainPoint=retrainPoint)
 
     if numMal > 0: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses, gpreds,cpreds,selected, alphas,file=headerFile)
     else: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses,gpreds,cpreds,selected, alphas,file=headerFile, ben=True)
@@ -272,6 +278,7 @@ if __name__ == '__main__':
     if cleanTog:
         if save:
             clean(headerFile + "trainloader")
+            clean(headerFile + "lira_detector.pt")
         try:
             clean(headerFile + "FederatedModels")
             clean(headerFile + "ReferenceModels")
