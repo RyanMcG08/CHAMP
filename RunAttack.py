@@ -278,7 +278,8 @@ if __name__ == '__main__':
     if cleanTog:
         if save:
             clean(headerFile + "trainloader")
-            clean(headerFile + "lira_detector.pt")
+            if lira == 1:
+                clean(headerFile + "lira_detector.pt")
         try:
             clean(headerFile + "FederatedModels")
             clean(headerFile + "ReferenceModels")

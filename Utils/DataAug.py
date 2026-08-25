@@ -85,7 +85,6 @@ def labelFlipping(indexes, dataset_, type):
     :param: Targeted or Untargeted
     :return: the label-flipped dataset
     """
-    channels = len(dataset_.data[0][0,0])
     for index in indexes:
         if type == 0:
             dataset_.targets[index] = 1

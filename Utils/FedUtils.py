@@ -190,7 +190,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 toggle = 0
                 for i in selected_:
                     if Clients[i] < numMal:
-                        toggle += 1
+                        toggle += selected_[i]
                 selected.append(toggle)
         except:
             fed = getAgg(nets, scheme, trainLoader, param, global_model,numMal,round,file)
@@ -264,7 +264,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 cpreds_.append(detector.predict_proba(nets[client]))
             cpreds.append(cpreds_)
 
-            if round % retrainPoint == 0 and retrainPoint > 0:
+            if retrainPoint > 0 and round % retrainPoint == 0:
                 detector.set_init_model(fed)
 
                 detector.fit(malLoader, dataset)
@@ -335,11 +335,11 @@ def getAgg(nets, scheme, trainloader, param,g,numMal,round,file):
     elif scheme == 3:
         return krum(nets,param,f=numMal)
     elif scheme == 4:
-        return bulyan(nets,param,numMal)
+        return bulyan(nets,param)
     elif scheme == 5:
         return rfa(nets)
     elif scheme == 6:
-        return dai(nets,param,numMal)
+        return dai(nets)
     elif scheme == 7:
         return aggregate_with_rlr(nets,g)
     elif scheme == 8:
@@ -431,9 +431,8 @@ def krum(nets, m=1, f=1):
     :param nets: list of client models
     :param m: number of models to average in Multi-Krum
     :param f: number of malicious clients allowed by the aggregator
-    :return: aggregated model
+    :return: aggregated model, selected idx(s), ranking list (ranks_by_client[i] = rank of client i)
     """
-    numMal = f
     f = 1
     num_clients = len(nets)
     flat_params = []
@@ -448,16 +447,29 @@ def krum(nets, m=1, f=1):
             dist = torch.norm(flat_params[i] - flat_params[j]) ** 2
             distances[i, j] = distances[j, i] = dist
 
-    # Compute Krum scores
     scores = []
     for i in range(num_clients):
         dists = distances[i].clone()
         nearest = torch.topk(dists, k=int(num_clients - f - 1), largest=False).values
         scores.append(torch.sum(nearest).item())
 
-    # Select model(s) with lowest scores
+    scores_tensor = torch.tensor(scores)
+
+    # --- Ranking: client ids ordered best (lowest score) -> worst (largest score) ---
+    ranked_idxs = torch.argsort(scores_tensor).tolist()   # ranked_idxs[rank] = client_id
+
+    # --- Ranks indexed by client id: ranks_by_client[client_id] = rank ---
+    # rank 0 = smallest score (most "normal"), rank num_clients-1 = largest score (most suspicious)
+    ranks_by_client = [0] * num_clients
+    for rank, cid in enumerate(ranked_idxs):
+        ranks_by_client[cid] = rank
+
+    #for cid in range(num_clients):
+    #    print(f"[Krum] Client {cid} ranked {ranks_by_client[cid]} out of {num_clients} "
+    #          f"(score={scores[cid]:.4f})")
+
     if m > 1:
-        selected_idxs = torch.topk(torch.tensor(scores), k=int(m), largest=False).indices
+        selected_idxs = torch.topk(scores_tensor, k=int(m), largest=False).indices
         selected_models = [nets[i] for i in selected_idxs]
 
         fed = copy.deepcopy(nets[0])
@@ -467,21 +479,20 @@ def krum(nets, m=1, f=1):
                 mean_param = stacked.mean(dim=0)
                 fed_param.data.copy_(mean_param)
 
-        return fed, selected_idxs
+        return fed, ranks_by_client
 
     else:
-        best_idx = torch.argmin(torch.tensor(scores)).item()
+        best_idx = torch.argmin(scores_tensor).item()
         fed = copy.deepcopy(nets[best_idx])
-        return fed, best_idx
+        return fed, ranks_by_client
 
-def bulyan(nets, f=1,numMal=1):
+def bulyan(nets, f=1):
     """
     Bulyan aggregation: combines Multi-Krum and trimmed mean.
 
     :param nets: list of client models
     :param f: number of Byzantine clients to tolerate
-    :param numMal: Number of malicious clients in the system
-    :return: aggregated model
+    :return: aggregated model, selected models info, ranking list (ranks_by_client[i] = rank of client i)
     """
     num_clients = len(nets)
     assert 2 * f + 3 <= num_clients, "Not enough clients for Bulyan (requires at least 2f + 3)"
@@ -503,8 +514,22 @@ def bulyan(nets, f=1,numMal=1):
         nearest = torch.topk(dists, k=int(num_clients - f - 2), largest=False).values
         scores.append(torch.sum(nearest).item())
 
+    scores_tensor = torch.tensor(scores)
+
+    # --- Ranking: client ids ordered best (lowest score) -> worst (largest score) ---
+    ranked_idxs = torch.argsort(scores_tensor).tolist()   # ranked_idxs[rank] = client_id
+
+    # --- Ranks indexed by client id: ranks_by_client[client_id] = rank ---
+    ranks_by_client = [0] * num_clients
+    for rank, cid in enumerate(ranked_idxs):
+        ranks_by_client[cid] = rank
+
+    #for cid in range(num_clients):
+    #    print(f"[Bulyan] Client {cid} ranked {ranks_by_client[cid]} out of {num_clients} "
+    #          f"(score={scores[cid]:.4f})")
+
     num_selected = num_clients - (2 * f)
-    selected_idxs = torch.topk(torch.tensor(scores), k=int(num_selected), largest=False).indices
+    selected_idxs = torch.topk(scores_tensor, k=int(num_selected), largest=False).indices
     selected_models = [nets[i] for i in selected_idxs]
 
     fed = copy.deepcopy(nets[0])
@@ -516,11 +541,7 @@ def bulyan(nets, f=1,numMal=1):
             mean_param = trimmed_vals.mean(dim=0)
             fed_param.data.copy_(mean_param)
 
-    if any(i < f for i in selected_idxs):
-        models = [i.item() for i in selected_idxs if i.item() < numMal]
-        return fed, models
-    else:
-        return fed, 0
+    return fed, ranks_by_client
 
 def rfa(nets, max_iter=50, tol=1e-6, eps=1e-6):
     """
@@ -562,14 +583,14 @@ def rfa(nets, max_iter=50, tol=1e-6, eps=1e-6):
 
     return fed, weights[0].item()
 
-def dai(nets, threshold_quantile=0.1,numMal=1):
+def dai(nets, threshold_quantile=0.1, numMal=1):
     """
     Direction Alignment Inspection (DAI)
 
     :param nets: list of client models
-    :param threshold_quantile: quantile threshold to filter clients with lowest alignment scores
-    :param numMal: Number of malicious clients in system
-    :return: list of filtered client models
+    :param threshold_quantile: unused if numMal is set meaningfully; kept for backward compat
+    :param numMal: number of clients to treat as malicious and filter out
+    :return: aggregated model, indices of benign clients, ranking list (ranks_by_client[i] = rank of client i, 0 = most aligned)
     """
     flat_params = []
     for net in nets:
@@ -578,19 +599,29 @@ def dai(nets, threshold_quantile=0.1,numMal=1):
 
     stacked_params = torch.stack(flat_params)
     directions = stacked_params - stacked_params.mean(dim=0, keepdim=True)
-    directions = directions / directions.norm(dim=1, keepdim=True)
+    directions = directions / directions.norm(dim=1, keepdim=True).clamp_min(1e-12)
 
     similarity_matrix = torch.matmul(directions, directions.T)
     num_clients = similarity_matrix.shape[0]
     alignment_scores = (similarity_matrix.sum(dim=1) - 1) / (num_clients - 1)
 
-    threshold = torch.quantile(alignment_scores, threshold_quantile)
-    benign_indices = (alignment_scores >= threshold).nonzero(as_tuple=True)[0]
-    filtered_nets = [nets[i] for i in benign_indices.tolist()]
+    # --- Ranking: client ids ordered best (highest alignment) -> worst (lowest alignment) ---
+    ranked_idxs = torch.argsort(alignment_scores, descending=True).tolist()  # ranked_idxs[rank] = client_id
 
+    # --- Ranks indexed by client id: ranks_by_client[client_id] = rank ---
+    # rank 0 = most aligned (most "normal"), rank num_clients-1 = least aligned (most suspicious)
+    ranks_by_client = [0] * num_clients
+    for rank, cid in enumerate(ranked_idxs):
+        ranks_by_client[cid] = rank
+
+
+    k = max(num_clients - numMal, 1)
+    benign_indices = torch.topk(alignment_scores, k=k, largest=True).indices
+
+    filtered_nets = [nets[i] for i in benign_indices.tolist()]
     fed = Avg(filtered_nets)
 
-    return fed, benign_indices
+    return fed, ranks_by_client
 
 
 def robust_learning_rates_from_updates(updates, c=1.0, eps=1e-12):
@@ -648,7 +679,7 @@ def aggregate_with_rlr(nets, reference_net, c=1.0, theta=1.0, flip_when_ambiguou
             p.data.copy_(new_vec[pointer:pointer + numel].view_as(p))
             pointer += numel
 
-    return aggregated, scales[0].item()
+    return aggregated, scales.tolist()
 
 
 def foolsgold_weights(nets):
