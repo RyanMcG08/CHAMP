@@ -1,5 +1,6 @@
-# CHAMP ARTIFACT
-Federated Learning framework allowing the user to implement the champ algorithm
+# BN Experiments ARTIFACT
+Federated Learning framework allowing the user to implement the experiments for the Paper "The Natural Vulnerability of Batch Normalisation to
+Backdoor Attacks"
 
 ## Overview
 This tool allows you to simulate:
@@ -7,22 +8,17 @@ This tool allows you to simulate:
 - Backdoor attacks (with different trigger types)
 - Defense mechanisms like median and trimmed mean and more
 - FL systems under attack by backdoor poisoning, with and without the adaptive attack champ
-
-## Supplementary Demonstrations attached
-In this artifact we have attached a visualisation of our attack CHAMP and for comparison a visualisation of a BadNets backdoor poisoning attack, as an mp4 video. Here, the malicious update is highlighted as a star and clients that have been included in the multi-krum robust 
-aggregation scheme are highlighted in green. We can see our attack moving into the distribution of accepted updates by 
-the RA scheme, whereas a naive attacker cannot enter the set of accepted updates to the global model and therefore implements no poisoning.
-
-These experiments were completed on the Cifar-10 dataset using Multi-Krum as the RA scheme. Using the same setup as highlighted in the main text of the paper. The comparison is shown in the attached file "ComparisonOfAttacks.mp4".
+- Simulations of centralised and FL systems with and without Bn layers
 
 ## How to Run
 
 Run the main script with any combination of arguments:
-
+### For Centralised Experiments
+python RunCentralised.py [arguments] 
+### For FL Experiments
 python RunAttack.py [arguments]
 
 Baseline Example:
-
 python RunAttack.py --trainingRounds 50 --numClients 10 --numMal 1 --scheme 1 --adaptive 1 --attack_type 0
 
 ## Overview of arguements
@@ -44,14 +40,13 @@ Arguments:
 - asr (int, 0 or 1, default: 0): Toggle for using ASR as loss function scalar instead of Membership Inference  
 - percentages (list of floats, default: [0.3, 0.2, 0.1, 0.0, 0.0, 0.0]): Percentage of poisoned samples and number of reference models 
 - cleanTog (int, 0 or 1, default: 1): Toggle cleaning all models used in simulation of FL system
-- net (str, choices: "alexnet", "fashionMNISTCNN", default: "fashionMNISTCNN"): Model architecture  
-- dataset (str, choices: "MNIST", "cifar10", "fashionMNIST", default: "fashionMNIST"): Dataset name  
+- net (str, choices: choices, default: "fashionMNISTCNN"): Model architecture  
+- dataset (str, choices: "MNIST", "cifar10","cifar100", "fashionMNIST", default: "fashionMNIST"): Dataset name  
 - backdoor (str, choices: "one", "three", "five", default: "letterR"): Backdoor trigger type  
 - alpha (int, default: 0): Parameter for Dirichlet distribution in non-IID data)
 - lossFunc (int, default: 0): Loss function metric 
 - lr (float, default: 0.1): Local client learning rate
 - startMal (int, default: 0): Starting round for malicious behaviour
-- a3fl (int, default: 0): Toggle for doing A3FL attacks, if 1, overrides "adaptive" as attackers behaviour
 - selection (str, default: "fixed"): Either "fixed" rate or "random" selection of malicious clients
 - save (int, default: 1): Toggle for saving output files during training
 - percentage_bd (float, default: 1.0): Fraction of source class samples to backdoor in malicious clients
@@ -65,27 +60,15 @@ Arguments:
 4. Bulyan
 5. RFA
 6. Direction Alignment Inspection
-7. RLR
-8. FoolsGold
 
 #### Attack_type
 0. Targeted Backdoor attack
 1. Untargeted Backdoor attack
 
-#### Loss
+#### Loss For Champ attack
 1. Euclidean Distance
 2. Huber Loss
 3. Cosine Similarity
-
-## Supported Models & Datasets
-
-Models:
-- alexnet
-- fashionMNISTCNN
-
-Datasets:
-- cifar10
-- fashion-mnist
 
 ## Backdoor Trigger Types
 
@@ -95,8 +78,7 @@ five: Injects a 5x5 trigger
 letterR: Injects a Letter R trigger
 
 ## Output
-
 - Training logs, plots and metrics saved to the file --headerFile
 - Use --verbose 1 for detailed output during training
-- Use --cleanTog 0 to keep all interim files (local models and reference models)
+- Use --cleanTog 0 to keep all interim files (local models and reference models for champ)
 - Use --save 0 to delete model files during training (this does not affect performance)

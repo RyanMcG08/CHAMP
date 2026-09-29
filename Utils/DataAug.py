@@ -17,16 +17,16 @@ onebyone = [
     (1, 1)
 ]
 threebythree = [
-    (1, 1), (1, 2), (1, 3),
-    (2, 1), (2, 2), (2, 3),
-    (3, 1), (3, 2), (3, 3)
+    (1, 1), (1, 3),
+    (2, 2),
+    (3, 1), (3, 3)
 ]
 fivebyfive = [
-    (1, 1), (1, 2), (1, 3), (1, 4), (1, 5),
-    (2, 1), (2, 2), (2, 3), (2, 4), (2, 5),
-    (3, 1), (3, 2), (3, 3), (3, 4), (3, 5),
-    (4, 1), (4, 2), (4, 3), (4, 4), (4, 5),
-    (5, 1), (5, 2), (5, 3), (5, 4), (5, 5),
+    (1, 1), (1, 5),
+    (2, 2), (2, 4),
+    (3, 3),
+    (4, 2), (4, 4),
+    (5, 1), (5, 5),
 ]
 
 
@@ -79,7 +79,7 @@ def backdoorInsertion(indexes, dataset_, type,backdoor):
 
 def labelFlipping(indexes, dataset_, type):
     """
-    Backdoors indexes of a dataset
+    label flips indexes of a dataset
     :param indexes: indexes to be indexed
     :param dataset_: dataset
     :param: Targeted or Untargeted
@@ -93,14 +93,11 @@ def labelFlipping(indexes, dataset_, type):
     return dataset_
 
 
-def getLoaders(numClients, numMal, size=50000, testSize=10000,
-               dataset=MNIST, attack_type=0, backdoor=letter_R, alpha=0, bd_percent = 1, bs = 64):
+def getLoaders(numClients, numMal, dataset=MNIST, attack_type=0, backdoor=letter_R, alpha=0, bd_percent = 1, bs = 64):
     """
     Gets train and test loaders for FL. Optionally applies Dirichlet-based partitioning (non-IID).
     :param numClients: Number of clients
     :param numMal: Number of malicious clients
-    :param size: Number of training samples to use
-    :param testSize: Number of test samples to use
     :param dataset: Choice of Dataset
     :param attack_type: Type of attack
     :param backdoor: Backdoor patch
@@ -230,7 +227,7 @@ def SaveData(gAccs,gASRs,gLosses,accs,losses,gpreds,cpreds,selected,alphas,file=
     :param selected: Whether a mal client was selected by the agg scheme
     :param alphas: Calculated alpha values
     :param file: Output file
-    :param ben: Wheter the simulation was fully benign
+    :param ben: Whether the simulation was fully benign
     :return: Saves data to output files
     """
     if ben == False and selected != []:
@@ -299,8 +296,3 @@ def SaveData(gAccs,gASRs,gLosses,accs,losses,gpreds,cpreds,selected,alphas,file=
             writer.writerow([f"client{i}" for i in range(1, len(cpreds[0]) + 1)] + ["global"])
             for row in data_:
                 writer.writerow(row)
-
-def getoriginal(dataloader):
-
-
-    return dataloader

@@ -5,19 +5,18 @@ import torch
 import copy
 from sklearn.svm import SVC
 import pickle
-from torchvision.datasets import MNIST, FashionMNIST, CIFAR10
+from torchvision.datasets import MNIST
 from torch.utils.data import DataLoader,ConcatDataset
-from Utils import Training, DataAug, FedUtils, PlottingUtils, A3fl
+from Utils import Training, DataAug
 from itertools import cycle
 import numpy as np
 import random
-from Utils.Lira import LiraBackdoorDetector, BackdoorConfig, LiraConfig
 def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoader,trainingRounds,epochs,
                   percentages, device, numMal, file = "", verbose = True,retrainPoint=1,model=alexnet(),
                   C=1,kernel="poly",tol=1e-3,lr = 0.1,dataset=MNIST,bDoorRefCount = 1,
                   scheme = 0, param=0, adaptive=False, r=10, adaptiveInterval = 1,attack_type=0,delta=1,asr=False,
-                  backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,a3fl = False,
-                  selection = "fixed",save = True,bd_percent = 1, batch_size = 32, detector = None):
+                  backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,
+                  selection = "fixed",save = True,bd_percent = 1, batch_size = 32):
     """
     Runner that runs the federated learning system
     :param trainLoader: Set of trainloaders
@@ -45,13 +44,17 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
     :param adaptive: using BSCI to alter loss toggle
     :param r: what training round to begin implementing our adaptive poisoning
     :param adaptiveInterval: What rounds to recalculate alpha
-    :param attack_type: Backdoor or label-flipping, targeted r untargeted
+    :param attack_type: Backdoor or label-flipping, targeted or untargeted
     :param delta: Scalar for scaling poisonous loss function
     :param asr: Using ASR as proximity metric toggle
-    :param backdoor:
-    :param alpha:
-    :param lossFunc:
-    :return:
+    :param backdoor: What backdoor type
+    :param alpha: Dirichlet distribution parameter
+    :param lossFunc: What loss function champ uses
+    :param selection: How to organise client selection
+    :param save: Save output files or not
+    :param bd_percent: What percentage of samples to backdoor
+    :param batch_size: Batch size for training
+    :return: the FL results
     """
     #combining testsets
     datasets = [loader.dataset for loader in testLoader]
@@ -62,22 +65,6 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
         batch_size=128,
         shuffle=False
     )
-    if a3fl:
-        # Initialize attacker
-        adv_epochs = 5
-        trigger_lr = 0.01
-        trigger_outter_epochs = 100
-        dm_adv_K = 1
-        dm_adv_model_count = 1
-        noise_loss_lambda = 0.01
-        bkd_ratio = 1
-        if backdoor == DataAug.onebyone: ts = 1
-        elif backdoor == DataAug.threebythree: ts = 3
-        else: ts = 5
-        if dataset == MNIST or dataset == FashionMNIST: [channel,im_size] = 1,28
-        else: [channel,im_size] = 3,32
-        attacker = A3fl.Attacker(ts, adv_epochs, 1, trigger_lr, trigger_outter_epochs,
-                            dm_adv_K, dm_adv_model_count, noise_loss_lambda, bkd_ratio,channel,im_size)
     selected = []
     nets = [copy.deepcopy(Training.createModel(model, device)) for _ in range(numClients)]
 
@@ -106,9 +93,8 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
             for i in range(numClients):
                 if verbose:
                     print(f"Training Local Model {i+1}")
-                if i < numMal and round > 0 and adaptive is True and (round+1) % adaptiveInterval == 0 and a3fl == False:
-                    if detector == None: alpha = getAvMI(gpreds,r)
-                    else: alpha = 1 - detector.predict_proba(fed)
+                if i < numMal and round > 0 and adaptive is True and (round+1) % adaptiveInterval == 0:
+                    alpha = getAvMI(gpreds,r)
 
                     if asr:
                         alpha = getAvASR(gASRs,r)
@@ -118,10 +104,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                                                    file + "FederatedModels/Model" + str(i) + "_" + str(round),
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
                                                     delta=delta,lossFunc=lossFunc,save=save)
-                elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
-                    loss, acc, mask, trigger = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model,attacker,device, verbose=verbose, lr=lr,
-                                              round=round)
-                    backdoor = [mask,trigger]
+
                 else:
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
                                                     file + "FederatedModels/Model" + str(i) + "_" + str(round),
@@ -129,10 +112,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 losses[i].append(loss)
                 accs[i].append(acc)
             if alpha == -1 and (round+1) % adaptiveInterval == 0 and round > 0:
-                if detector == None:
-                    alpha = getAvMI(gpreds, r)
-                else:
-                    alpha = 1 - detector.predict_proba(fed)
+                alpha = getAvMI(gpreds, r)
         else:
             if round < startMal:
                 Clients = random.sample(range(numMal,100), 10)
@@ -145,10 +125,8 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 if verbose:
                     print(f"Training Local Model {i+1}")
                 if i < numMal and round > 0 and adaptive is True and (round+1) % adaptiveInterval == 0:
-                    if detector == None:
-                        alpha = getAvMI(gpreds, r)
-                    else:
-                        alpha = 1 - detector.predict_proba(fed)
+                    alpha = getAvMI(gpreds, r)
+
                     if asr:
                         alpha = getAvASR(gASRs,r)
                     if verbose:
@@ -157,10 +135,6 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                                                    file + "FederatedModels/Model" + str(i) + "_" + str(round),
                                                    False, verbose=verbose, lr=lr, alpha=alpha,round=round,model=model,
                                                     delta=delta,lossFunc=lossFunc,save=save)
-                elif i < numMal and round > 0 and (round+1) % adaptiveInterval == 0 and a3fl == True:
-                    loss, acc, mask, trigger = A3fl.RunAttack(nets[i], trainLoader[i], epochs,global_model,attacker,device, verbose=verbose, lr=lr,
-                                              round=round)
-                    backdoor = [mask, trigger]
                 else:
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
                                                     file + "FederatedModels/Model" + str(i) + "_" + str(round),
@@ -168,10 +142,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 losses[i].append(loss)
                 accs[i].append(acc)
             if alpha == -1 and (round+1) % adaptiveInterval == 0 and round > 1:
-                if detector == None:
-                    alpha = getAvMI(gpreds, r)
-                else:
-                    alpha =  1- detector.predict_proba(fed)
+                alpha = getAvMI(gpreds, r)
         alphas.append(alpha)
         nets_ = []
         if Clients != []:
@@ -210,7 +181,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
             torch.save(fed.state_dict(), file + "FederatedModels/Global" + str(round))
             if round != 0: os.remove(file + "FederatedModels/Global"+str(round-1))
 
-        if round >= startMal-1 and adaptive == 1 and detector == None:
+        if round >= startMal-1 and adaptive == 1:
             if round % retrainPoint == 0:
                 if verbose:
                     print("Training Reference Models")
@@ -254,76 +225,53 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                     for client in Clients:
                         cpreds_.append((np.sum(client_preds[client]) / len(client_preds[client])) * 100)
                     cpreds.append(cpreds_)
-        elif round >= startMal-1 and adaptive == 1 and detector != None:
-            print(f'global has a {detector.predict_proba(fed) * 100:.2f}% chance of being malicious')
-            gpreds.append(detector.predict_proba(fed))
-            cpreds_ = []
-
-            for client in Clients:
-                print(f'Client {client} has a {detector.predict_proba(nets[client]) * 100:.2f}% chance of being malicious')
-                cpreds_.append(detector.predict_proba(nets[client]))
-            cpreds.append(cpreds_)
-
-            if retrainPoint > 0 and round % retrainPoint == 0:
-                detector.set_init_model(fed)
-
-                detector.fit(malLoader, dataset)
-
-                detector.save(file + "lira_detector" + str(round) + ".pt")
 
     if save: pickle.dump(backdooredLoader, open(file + "trainloader", "wb"))
 
     return fed, gAccs, gLosses, gASRs, accs,losses, selected, gpreds, cpreds, alphas
 
 def get_fixed(trainingRounds, numClients,numMal,clients_per_round,startMal):
+    """
+    get organisation of all clients selection
+    :param trainingRounds: Number of training rounds
+    :param numClients: Number of Clients
+    :param numMal: Number of Malicious Clients
+    :param clients_per_round: Number of Malicious Clients per aggregation round
+    :param startMal: What round malicious clients start attacking
+    :return: What clients to select in each round
+    """
     random.seed(42)
     malicious_clients = list(range(numMal))
     honest_clients = list(range(numMal, numClients))
-
-    # Cycle through malicious clients to rotate them fairly
     malicious_cycle = cycle(malicious_clients)
 
-    # Counter for fractional malicious slots
-    malicious_counter = 0
 
-    # For storing selected clients per round
+    malicious_counter = 0
     round_schedule = []
 
     for round in range(trainingRounds):
         if round < startMal:
-            # before malicious clients start showing up
             clients = random.sample(honest_clients, clients_per_round)
         else:
-            # Calculate expected number of malicious clients this round
-            expected_malicious = clients_per_round * (numMal / numClients)
-            malicious_counter += expected_malicious
+            malicious_counter += clients_per_round * (numMal / numClients)
+            malicious_counter -=  int(malicious_counter)
 
-            # Number of malicious clients to actually pick this round
-            num_malicious_to_pick = int(malicious_counter)
-            malicious_counter -= num_malicious_to_pick  # subtract what we picked
-
-            # Pick malicious clients fairly using the cycle
-            selected_malicious = [next(malicious_cycle) for _ in range(num_malicious_to_pick)]
-
-            # Pick remaining honest clients
-            num_honest_to_pick = clients_per_round - num_malicious_to_pick
-            selected_honest = random.sample(honest_clients, num_honest_to_pick)
+            selected_malicious = [next(malicious_cycle) for _ in range(int(malicious_counter))]
+            selected_honest = random.sample(honest_clients, clients_per_round - int(malicious_counter))
 
             clients = selected_malicious + selected_honest
-            random.shuffle(clients)  # optional: mix malicious and honest
+            random.shuffle(clients)
 
         round_schedule.append(clients)
     return round_schedule
-def getAgg(nets, scheme, trainloader, param,g,numMal,round,file):
+def getAgg(nets, scheme, trainloader,param,numMal):
     """
     get and run RA scheme
     :param nets: Uploaded models to the server
     :param scheme: RA scheme selection
     :param trainloader: set of trainloaders
     :param param: Parameters for RA scheme if applicable
-    :param g: Previous round global model
     :param numMal: Number of malicious clients
-    :param round: Training Round
     :return: New Global Model
     """
     if scheme == 0:
@@ -333,19 +281,13 @@ def getAgg(nets, scheme, trainloader, param,g,numMal,round,file):
     elif scheme == 2:
         return fta(nets,param)
     elif scheme == 3:
-        return krum(nets,param,f=numMal)
+        return krum(nets,param)
     elif scheme == 4:
         return bulyan(nets,param)
     elif scheme == 5:
         return rfa(nets)
     elif scheme == 6:
         return dai(nets)
-    elif scheme == 7:
-        return aggregate_with_rlr(nets,g)
-    elif scheme == 8:
-        return aggregate_with_foolsgold(nets,g)
-    elif scheme == 9:
-        return flame(nets,g)
     else:
         assert "No Valid Aggregation Scheme Selected"
 def weightedAvg(nets, trainLoaders):
@@ -425,7 +367,7 @@ def fta(nets, beta=0.1):
     return fed
 
 
-def krum(nets, m=1, f=1):
+def krum(nets, m=1):
     """
     Krum (or Multi-Krum) aggregation.
     :param nets: list of client models
@@ -454,19 +396,10 @@ def krum(nets, m=1, f=1):
         scores.append(torch.sum(nearest).item())
 
     scores_tensor = torch.tensor(scores)
-
-    # --- Ranking: client ids ordered best (lowest score) -> worst (largest score) ---
-    ranked_idxs = torch.argsort(scores_tensor).tolist()   # ranked_idxs[rank] = client_id
-
-    # --- Ranks indexed by client id: ranks_by_client[client_id] = rank ---
-    # rank 0 = smallest score (most "normal"), rank num_clients-1 = largest score (most suspicious)
+    ranked_idxs = torch.argsort(scores_tensor).tolist()
     ranks_by_client = [0] * num_clients
     for rank, cid in enumerate(ranked_idxs):
         ranks_by_client[cid] = rank
-
-    #for cid in range(num_clients):
-    #    print(f"[Krum] Client {cid} ranked {ranks_by_client[cid]} out of {num_clients} "
-    #          f"(score={scores[cid]:.4f})")
 
     if m > 1:
         selected_idxs = torch.topk(scores_tensor, k=int(m), largest=False).indices
@@ -515,18 +448,11 @@ def bulyan(nets, f=1):
         scores.append(torch.sum(nearest).item())
 
     scores_tensor = torch.tensor(scores)
+    ranked_idxs = torch.argsort(scores_tensor).tolist()
 
-    # --- Ranking: client ids ordered best (lowest score) -> worst (largest score) ---
-    ranked_idxs = torch.argsort(scores_tensor).tolist()   # ranked_idxs[rank] = client_id
-
-    # --- Ranks indexed by client id: ranks_by_client[client_id] = rank ---
     ranks_by_client = [0] * num_clients
     for rank, cid in enumerate(ranked_idxs):
         ranks_by_client[cid] = rank
-
-    #for cid in range(num_clients):
-    #    print(f"[Bulyan] Client {cid} ranked {ranks_by_client[cid]} out of {num_clients} "
-    #          f"(score={scores[cid]:.4f})")
 
     num_selected = num_clients - (2 * f)
     selected_idxs = torch.topk(scores_tensor, k=int(num_selected), largest=False).indices
@@ -583,7 +509,7 @@ def rfa(nets, max_iter=50, tol=1e-6, eps=1e-6):
 
     return fed, weights[0].item()
 
-def dai(nets, threshold_quantile=0.1, numMal=1):
+def dai(nets, numMal=1):
     """
     Direction Alignment Inspection (DAI)
 
@@ -605,11 +531,8 @@ def dai(nets, threshold_quantile=0.1, numMal=1):
     num_clients = similarity_matrix.shape[0]
     alignment_scores = (similarity_matrix.sum(dim=1) - 1) / (num_clients - 1)
 
-    # --- Ranking: client ids ordered best (highest alignment) -> worst (lowest alignment) ---
-    ranked_idxs = torch.argsort(alignment_scores, descending=True).tolist()  # ranked_idxs[rank] = client_id
+    ranked_idxs = torch.argsort(alignment_scores, descending=True).tolist()
 
-    # --- Ranks indexed by client id: ranks_by_client[client_id] = rank ---
-    # rank 0 = most aligned (most "normal"), rank num_clients-1 = least aligned (most suspicious)
     ranks_by_client = [0] * num_clients
     for rank, cid in enumerate(ranked_idxs):
         ranks_by_client[cid] = rank
@@ -623,131 +546,6 @@ def dai(nets, threshold_quantile=0.1, numMal=1):
 
     return fed, ranks_by_client
 
-
-def robust_learning_rates_from_updates(updates, c=1.0, eps=1e-12):
-    norms = torch.norm(updates, dim=1)
-    scales = c / (c + norms + eps)
-    return scales, norms
-
-def aggregate_with_rlr(nets, reference_net, c=1.0, theta=1.0, flip_when_ambiguous=True):
-    """
-    RLR
-    :param nets: list of client models
-    :param reference_net: Previous rounds global model for reference
-    :param c: RLR hyperparameter controlling scaling
-    :param theta: threshold for sign-of-signs decision
-    :param flip_when_ambiguous: Multiplies LR by -1 when sum_signs < theta if True, if False these co-ords are zeroed
-    :return: Aggregated model and the scalar value at each round as a measure of trust in malicious client
-    """
-    ref_vec = torch.cat([p.data.view(-1) for p in reference_net.parameters()])
-    updates = []
-    for net in nets:
-        client_vec = torch.cat([p.data.view(-1) for p in net.parameters()])
-        updates.append(client_vec - ref_vec)
-    stacked_updates = torch.stack(updates)
-    scales, norms = robust_learning_rates_from_updates(stacked_updates, c=c)
-
-    signs = torch.sign(stacked_updates)
-    weighted_sign_sums = (scales.unsqueeze(1) * signs).sum(dim=0)
-
-    # Determine base direction by sign-of-signs
-    final_direction = torch.sign(weighted_sign_sums)
-
-    # Handle ambiguous coordinates: abs(sum) < theta
-    ambiguous_mask = weighted_sign_sums.abs() < theta
-
-    if ambiguous_mask.any():
-        if flip_when_ambiguous:
-            final_direction[ambiguous_mask] = -final_direction[ambiguous_mask]
-            zero_mask = final_direction == 0
-            if zero_mask.any():
-                final_direction[zero_mask] = -1.0
-        else:
-            final_direction[ambiguous_mask] = 0.0
-
-    weighted_abs = (scales.unsqueeze(1) * stacked_updates.abs()).sum(dim=0)
-    denom = scales.sum().clamp_min(1e-12)
-    avg_weighted_abs = weighted_abs / denom
-
-    final_update = final_direction * avg_weighted_abs
-    new_vec = ref_vec + final_update
-    aggregated = copy.deepcopy(reference_net)
-    with torch.no_grad():
-        pointer = 0
-        for p in aggregated.parameters():
-            numel = p.numel()
-            p.data.copy_(new_vec[pointer:pointer + numel].view_as(p))
-            pointer += numel
-
-    return aggregated, scales.tolist()
-
-
-def foolsgold_weights(nets):
-    """
-    :param nets: Uploaded nets to the central server
-    :return: The weights for the foolsgold Ra scheme (trust in each client)
-    """
-    n = len(nets)
-    updates = []
-    for net in nets:
-        vec = torch.cat([p.data.view(-1) for p in net.parameters()])
-        updates.append(vec)
-    updates = torch.stack(updates)
-
-    updates_norm = updates / (updates.norm(dim=1, keepdim=True) + 1e-10)
-
-    cs = torch.mm(updates_norm, updates_norm.t())
-    cs.fill_diagonal_(0)
-    maxcs, _ = cs.max(dim=1)
-    for i in range(n):
-        for j in range(n):
-            if maxcs[i] < maxcs[j]:
-                cs[i, j] *= maxcs[i] / maxcs[j]
-
-    weights = 1 - cs.max(dim=1)[0]
-    weights = torch.clamp(weights, 0, 1)
-
-    eps = 1e-10
-    weights = torch.log(weights / (weights + eps) + eps)
-    weights = torch.sigmoid(weights * 10)
-
-    if weights.max() > 0:
-        weights = weights / weights.max()
-
-    return weights
-
-
-def aggregate_with_foolsgold(nets, reference_net):
-    """
-    Aggregate client models using FoolsGold scaling.
-
-    :param nets: Client models
-    :param reference_net: Previous round global model
-    :return: New global model
-    """
-    ref_vec = torch.cat([p.data.view(-1) for p in reference_net.parameters()])
-
-    weights = foolsgold_weights(nets)
-
-    updates = []
-    for net in nets:
-        client_vec = torch.cat([p.data.view(-1) for p in net.parameters()])
-        update = client_vec - ref_vec
-        updates.append(update)
-    stacked_updates = torch.stack(updates)
-
-    weighted_update = (weights.unsqueeze(1) * stacked_updates).sum(dim=0) / weights.sum()
-    new_vec = ref_vec + weighted_update
-
-    aggregated = copy.deepcopy(reference_net)
-    with torch.no_grad():
-        pointer = 0
-        for p in aggregated.parameters():
-            numel = p.numel()
-            p.data.copy_(new_vec[pointer:pointer + numel].view_as(p))
-            pointer += numel
-
-    return aggregated, weights[0].item()
 
 def getAvMI(preds, r):
     """
@@ -780,182 +578,3 @@ def getAvASR(asrs, r):
         running_average += asrs[-i]
     running_average /= (r*100)
     return 1 - running_average
-
-import copy
-import numpy as np
-import torch
-import hdbscan
-from sklearn.metrics.pairwise import cosine_distances
-
-
-def flatten_model(model):
-    return torch.cat([
-        p.detach().cpu().view(-1)
-        for p in model.parameters()
-    ])
-
-
-def flame(nets, global_model, noise_multiplier=0.001):
-    """
-    FLAME aggregation.
-
-    Parameters
-    ----------
-    nets : list
-        Client models.
-    global_model : nn.Module
-        Previous global model.
-    noise_multiplier : float
-        FLAME noise parameter.
-
-    Returns
-    -------
-    nn.Module
-        New global model.
-    """
-
-    global_vec = flatten_model(global_model)
-
-    updates = []
-    norms = []
-
-    # ----------------------------------
-    # Compute client updates
-    # ----------------------------------
-    for net in nets:
-        update = flatten_model(net) - global_vec
-
-        updates.append(update)
-        norms.append(torch.norm(update).item())
-
-    updates = torch.stack(updates)
-    norms = np.array(norms)
-
-    # ----------------------------------
-    # HDBSCAN clustering
-    # ----------------------------------
-    distance_matrix = cosine_distances(
-        updates.cpu().numpy().astype(np.float64)
-    ).astype(np.float64)
-
-    clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=len(nets) // 2 + 1,
-        min_samples=1,
-        allow_single_cluster=True
-    )
-
-    labels = clusterer.fit_predict(distance_matrix)
-
-    valid = labels != -1
-
-    if np.sum(valid) == 0:
-        benign_idx = np.arange(len(nets))
-    else:
-        unique, counts = np.unique(
-            labels[valid],
-            return_counts=True
-        )
-
-        largest_cluster = unique[np.argmax(counts)]
-
-        benign_idx = np.where(
-            labels == largest_cluster
-        )[0]
-
-    benign_updates = updates[benign_idx]
-    benign_norms = norms[benign_idx]
-
-    # ----------------------------------
-    # Norm clipping
-    # ----------------------------------
-    clipping_bound = np.median(benign_norms)
-
-    clipped_updates = []
-
-    for update in benign_updates:
-
-        norm = torch.norm(update)
-
-        if norm > clipping_bound:
-            update = update * (
-                clipping_bound / (norm + 1e-12)
-            )
-
-        clipped_updates.append(update)
-
-    clipped_updates = torch.stack(clipped_updates)
-
-    # ----------------------------------
-    # Average clipped updates
-    # ----------------------------------
-    aggregated_update = clipped_updates.mean(dim=0)
-
-    # ----------------------------------
-    # Gaussian noise
-    # ----------------------------------
-    noise_std = clipping_bound * noise_multiplier
-
-    noise = torch.randn_like(
-        aggregated_update
-    ) * noise_std
-
-    aggregated_update += noise
-
-    # ----------------------------------
-    # Construct new global model
-    # ----------------------------------
-    new_global = copy.deepcopy(global_model)
-
-    idx = 0
-
-    with torch.no_grad():
-        for param in new_global.parameters():
-
-            numel = param.numel()
-
-            update_chunk = aggregated_update[
-                idx:idx + numel
-            ].view_as(param)
-
-            param.copy_(
-                param + update_chunk.to(param.device)
-            )
-
-            idx += numel
-
-    return new_global, np.where(labels == 0)[0]
-
-def aggregate_with_bn(nets, trainLoaders, robust_weight_agg, share_bn_stats: bool):
-    """
-    Aggregate client models. Weights always go through the robust aggregator.
-    BN buffers are either synchronized (share_bn_stats=True) or left untouched
-    on each client (share_bn_stats=False) — never silently copied from nets[0].
-    :param nets: list of client models
-    :param trainLoaders: list of client train loaders (for weighting)
-    :param robust_weight_agg: fn(nets) -> aggregated weight state (Krum/trimmed-mean/RFA/etc.)
-    :param share_bn_stats: whether to synchronize BN running stats across clients
-    :return: aggregated model (weights) — plus, if share_bn_stats, a synced buffer state
-             to broadcast; if not, clients keep their own buffers locally.
-    """
-    fed = copy.deepcopy(nets[0])
-
-    # Weights: always through the robust rule, never plain FedAvg
-    robust_weight_agg(fed, nets)
-
-    if share_bn_stats:
-        num_samples = [len(loader.dataset) for loader in trainLoaders]
-        total_samples = sum(num_samples)
-        with torch.no_grad():
-            fed_buffers = list(fed.buffers())
-            for i, buf in enumerate(fed_buffers):
-                if 'num_batches_tracked' in list(fed.named_buffers())[i][0]:
-                    continue  # counter, not a stat to average
-                buf.zero_()
-                for model, samples in zip(nets, num_samples):
-                    model_buf = list(model.buffers())[i]
-                    buf.add_((samples / total_samples) * model_buf)
-        # fed's buffers are now the shared reference stats to broadcast to every client
-    # else: share_bn_stats=False — fed's buffers are irrelevant; each client keeps
-    # updating its own local buffers during its own local training, untouched here.
-
-    return fed

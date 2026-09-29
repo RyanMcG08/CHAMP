@@ -266,4 +266,3 @@ def getPrediction(attackModel, targetModels,trainloader, Titles = None,verbose =
         count +=1
 
     return predictions, featureVectors
-

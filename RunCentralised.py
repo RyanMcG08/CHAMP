@@ -1,50 +1,13 @@
 import numpy as np
 import torch
 import os
-from Utils import Training, DataAug, FedUtils, PlottingUtils
-from torch.utils.data import DataLoader,ConcatDataset
+from Utils import Training, DataAug
 from AlexNet import *
 import shutil
 from torchvision.datasets import CIFAR10, FashionMNIST, CIFAR100, MNIST
-#from datasets import load_dataset
-from torchvision import transforms
-from torch.utils.data import Dataset
 import argparse
 import torch.nn as nn
 import csv
-#class TinyImageNet(Dataset):
-#    def __init__(self, root=None, train=True, download=True, transform=None):
-#        dataset_dict = load_dataset("zh-plus/tiny-imagenet")#
-#
-#        if train:
-#            self.data = dataset_dict["train"]
-#        else:
-#            self.data = dataset_dict["valid"]
-#
-#        self.transform = transform
-
-        # ✅ ADD THIS (torchvision compatibility)
-#        self.targets = [item["label"] for item in self.data]
-
-        # Optional but nice (some codebases expect this)
-#        try:
-#            self.classes = self.data.features["label"].names
-#        except:
-#            self.classes = None
-
-#    def __len__(self):
-#        return len(self.data)
-
- #   def __getitem__(self, idx):
- #       item = self.data[idx]
- #       image = item["image"].convert("RGB")
- #       label = item["label"]
-
-#        if self.transform:
-#            image = self.transform(image)
-
-#        return image, label
-
 def clean(file):
     try:
         shutil.rmtree(file)
@@ -68,10 +31,6 @@ def getModel(model_name):
         return ResNet18_cifar100
     elif model_name == 'cifar100BN':
         return ResNet18_cifar100BN
-    elif model_name == 'imagenet':
-        return ResNet18_tinyImageNet
-    elif model_name == 'imagenetBN':
-        return ResNet18_tinyImageNetBN
 
     elif model_name == 'resnetNoBN':
         return ResNetNoBN
@@ -81,10 +40,6 @@ def getModel(model_name):
         return BatchNormModel
     elif model_name == "BatchNormOff":
         return NonBatchNormModel
-    elif model_name == "alexNetImagenet":
-        return alexNetImagenet
-    elif model_name == "alexNetImagenetBN":
-        return alexNetImagenetBN
     elif model_name == 'VGG16':
         return VGG16
     elif model_name == 'GN':
@@ -121,8 +76,7 @@ def getLoss(loss_no):
         lossFunc = Training.cosine_similarity_loss
     return lossFunc
 def parse_args():
-    modelChoices = ["alexnet","alexnetBN","fashionMNISTCNN","resnet","BatchNormOff","BatchNormOn", "cifar10","cifar10BN","cifar100","cifar100BN",'ResNetNoBN',
-           'imagenet','imagenetBN','ResNet18_cifar10', 'ResNet18_tinyImageNet', 'fashionMNIST', 'fashionMNISTBN', 'VGG16','GN','LN']
+    modelChoices = ["alexnet","alexnetBN","fashionMNISTCNN","resnet","BatchNormOff","BatchNormOn", "cifar10","cifar10BN","cifar100","cifar100BN",'ResNetNoBN', 'ResNet18_cifar10', 'fashionMNIST', 'fashionMNISTBN', 'VGG16','GN','LN']
     parser = argparse.ArgumentParser(description="RunAttack script")
 
     parser.add_argument("--trainingRounds", type=int, default=50, help="Number of training rounds (default: 50)")

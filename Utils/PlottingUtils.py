@@ -1,100 +1,6 @@
 import matplotlib.pyplot as plt
-from sklearn.manifold import TSNE
-import matplotlib.patheffects as pe
 import numpy as np
 import csv
-def plotLabelist(allLoader,Title):
-    """
-    Function to display the labels in each client (used more for non-IID settings)
-    :param allLoader: all client loaders
-    :param Title: Title of the plot
-    :return: displays a plot of all labels
-    """
-    plt.rcParams.update({'font.size': 18})
-    num_clients = len(allLoader)
-    num_classes = 10  # CIFAR-10 has 10 classes
-
-    label_distributions = []
-    # Step 1: Count labels for each client's dataloader
-    for loader in allLoader:
-        label_count = [0] * num_classes
-        for _, labels in loader:
-            for label in labels:
-                label_count[label.item()] += 1
-        label_distributions.append(label_count)
-
-    # Step 2: Convert to NumPy array for easier plotting
-    label_distributions = np.array(label_distributions)
-
-    # Step 3: Plot
-    fig, ax = plt.subplots(figsize=(12, 6))
-    x = np.arange(num_classes)
-
-    for i in range(num_clients):
-        ax.bar(x + i * 0.08, label_distributions[i], width=0.08, label=f'Client {i}')
-
-    ax.set_xticks(x + 0.36)  # Center the tick labels
-    ax.set_xticklabels([str(i) for i in range(num_classes)])
-    ax.set_xlabel('Class Label')
-    ax.set_ylabel('Number of Samples')
-    ax.legend()
-    plt.tight_layout()
-    plt.savefig(Title + ".pdf", dpi=500)
-    plt.show()
-
-def TSNE_PLOT(fvs,preds,file="",verbose=True):
-    """
-    Plots the TSNE of the output feature vectors of the global model at each round
-    :param fvs: Feature vectors of the global model
-    :param preds: Predicitons of the global model's maliciousness
-    :param file: output file
-    :param verbose: Verbose toggle
-    :return: Tsne plot
-    """
-    num_models = len(fvs)
-    fed_FVS_flat = np.vstack(fvs)
-    fed_preds_flat = np.concatenate(preds)
-
-    # Generate client IDs with correct lengths
-    model_ids = np.concatenate([np.full(len(fvs[i]), i) for i in range(num_models)])
-
-    # Apply t-SNE
-    tsne = TSNE(n_components=2, perplexity=30, random_state=42)
-    tsne_results = tsne.fit_transform(fed_FVS_flat)
-
-    # Plot
-    plt.figure(figsize=(10, 7))
-
-    for model_id in range(num_models):
-        idx = np.where(model_ids == model_id)[0]  # Get correct indices
-        client_preds = fed_preds_flat[idx]
-        color = 'red' if np.mean(client_preds) > 0.5 else 'blue'
-        plt.scatter(
-            tsne_results[idx, 0], tsne_results[idx, 1],
-            c=color, alpha=0.7,
-            edgecolors='k'  # Add edge color for contrast
-        )
-
-        mean_tsne = np.mean(tsne_results[idx], axis=0)
-
-        plt.text(
-            mean_tsne[0], mean_tsne[1], str(model_id),
-            color='black', ha='center', va='center', size=20,
-            path_effects=[pe.withStroke(linewidth=3, foreground='white')]  # Add white outline
-        )
-
-    plt.scatter([], [], c='red', alpha=0.7, label="Malicious")
-    plt.scatter([], [], c='blue', alpha=0.7, label="Benign")
-    plt.legend()
-
-    plt.title("t-SNE Visualization of Feature Vectors of Global Model at Different Training Rounds")
-    plt.xlabel("t-SNE Component 1")
-    plt.ylabel("t-SNE Component 2")
-
-    plt.savefig(file + "TSNE.pdf")
-    if verbose:
-        plt.show()
-    plt.close()
 
 def GlobalPlots(accs,asrs,losses,file="",verbose=True):
     """
@@ -156,39 +62,31 @@ def perTrainingRoundPlots(array,epochs, Metric,file="",verbose=True):
     :param verbose: Verbose toggle
     :return: Plots for a paramter at every training round
     """
-    # Create the plot
     plt.figure(figsize=(10, 6))
-    # Plot the accuracy over epochs
     for i, modelVals in enumerate(array):
         modelVals = np.array(modelVals).flatten()
         N = len(modelVals)
         plt.plot(np.arange(1, len(modelVals) + 1), modelVals, label=f'Client {i + 1}')
-    # Highlight communication rounds
     for i in range(epochs, N + 1, epochs):
         plt.axvline(x=i, color='red', linestyle='--')
-    # Labels and title
     plt.xlabel("Epochs")
     plt.ylabel(Metric)
     plt.title("Client " + Metric + " Over Epochs")
     plt.legend()
     plt.grid(True, axis='both')
-    # Show plot
     plt.savefig(file + "Client" + Metric + ".pdf")
     if verbose:
         plt.show()
     plt.close()
     plt.figure(figsize=(10, 6))
-    # Plot the accuracy over epochs
     for i, modelVals in enumerate(array):
         modelVals = np.array(modelVals).flatten()
         plt.plot(np.arange(1, len(modelVals[::epochs]) + 1), modelVals[::epochs], label=f'Client {i + 1}')
-    # Labels and title
     plt.xlabel("Training Rounds")
     plt.ylabel(Metric)
     plt.title("Client " + Metric + " Over Training Rounds")
     plt.legend()
     plt.grid(True, axis='both')
-    # Show plot
     plt.savefig(file + "Client" + Metric + "pRound.pdf")
     if verbose:
         plt.show()

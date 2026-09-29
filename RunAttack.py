@@ -6,44 +6,7 @@ from torch.utils.data import DataLoader,ConcatDataset
 from AlexNet import *
 import shutil
 from torchvision.datasets import CIFAR10, FashionMNIST, CIFAR100, MNIST
-from datasets import load_dataset
-from torchvision import transforms
-from torch.utils.data import Dataset
 import argparse
-
-
-class TinyImageNet(Dataset):
-    def __init__(self, root=None, train=True, download=True, transform=None):
-        dataset_dict = load_dataset("zh-plus/tiny-imagenet")
-
-        if train:
-            self.data = dataset_dict["train"]
-        else:
-            self.data = dataset_dict["valid"]
-
-        self.transform = transform
-
-        # ✅ ADD THIS (torchvision compatibility)
-        self.targets = [item["label"] for item in self.data]
-
-        # Optional but nice (some codebases expect this)
-        try:
-            self.classes = self.data.features["label"].names
-        except:
-            self.classes = None
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        image = item["image"].convert("RGB")
-        label = item["label"]
-
-        if self.transform:
-            image = self.transform(image)
-
-        return image, label
 
 def clean(file):
     try:
@@ -68,10 +31,6 @@ def getModel(model_name):
         return ResNet18_cifar100
     elif model_name == 'cifar100BN':
         return ResNet18_cifar100BN
-    elif model_name == 'imagenet':
-        return ResNet18_tinyImageNet
-    elif model_name == 'imagenetBN':
-        return ResNet18_tinyImageNetBN
 
     elif model_name == 'resnetNoBN':
         return ResNetNoBN
@@ -81,10 +40,6 @@ def getModel(model_name):
         return BatchNormModel
     elif model_name == "BatchNormOff":
         return NonBatchNormModel
-    elif model_name == "alexNetImagenet":
-        return alexNetImagenet
-    elif model_name == "alexNetImagenetBN":
-        return alexNetImagenetBN
     elif model_name == 'VGG16':
         return VGG16
     elif model_name == 'GN':
@@ -98,8 +53,6 @@ def getDataset(dataset_name):
         return CIFAR100
     elif dataset_name == "fashionMNIST":
         return FashionMNIST
-    elif dataset_name == "imagenet":
-        return TinyImageNet
     elif dataset_name == "mnist":
         return MNIST
 def getBackdoor(backdoor):
@@ -121,8 +74,7 @@ def getLoss(loss_no):
         lossFunc = Training.cosine_similarity_loss
     return lossFunc
 def parse_args():
-    modelChoices = ["alexnet","alexnetBN","fashionMNISTCNN","resnet","BatchNormOff","BatchNormOn", "cifar10","cifar10BN","cifar100","cifar100BN",'ResNetNoBN',
-           'imagenet','imagenetBN','ResNet18_cifar10', 'ResNet18_tinyImageNet', 'fashionMNIST', 'fashionMNISTBN', 'VGG16','GN','LN']
+    modelChoices = ["alexnet","alexnetBN","fashionMNISTCNN","resnet","BatchNormOff","BatchNormOn", "cifar10","cifar10BN","cifar100","cifar100BN",'ResNetNoBN','ResNet18_cifar10' 'fashionMNIST', 'fashionMNISTBN', 'VGG16','GN','LN']
     parser = argparse.ArgumentParser(description="RunAttack script")
 
     parser.add_argument("--trainingRounds", type=int, default=50, help="Number of training rounds (default: 50)")
@@ -141,20 +93,16 @@ def parse_args():
     parser.add_argument("--percentages", nargs='*', type=float, default=[0.3,0.2,0.1,0.0,0.0,0.0], help="List of percentages")
     parser.add_argument("--cleanTog", type=int, choices=[0, 1], default=1, help="Clean flag (default: 1)")
     parser.add_argument("--net",type=str, choices=modelChoices, default="fashionMNISTCNN", help="Model name (default: alexnet)")
-    parser.add_argument("--dataset", type=str, choices=["mnist","cifar10", "cifar100", "fashionMNIST", "imagenet"], default="fashionMNIST", help="Dataset name (default:Cifar10")
+    parser.add_argument("--dataset", type=str, choices=["mnist","cifar10", "cifar100", "fashionMNIST"], default="fashionMNIST", help="Dataset name (default:Cifar10")
     parser.add_argument("--backdoor", type=str, choices=["one", "three", "five", "LetterR"], default="three", help="Backdoor Type (default: one)")
     parser.add_argument("--alpha", type=float, default=0, help="Parameter alpha for IID level (default: 0)")
     parser.add_argument("--lossFunc", type=int, default=0, help="Loss Function (default: 0)")
     parser.add_argument("--lr", type=float, default=0.1, help="learning rate (default: 0.1)")
     parser.add_argument("--startMal", type=int, default=0, help="starting mal behaviour (default: 0)")
-    parser.add_argument("--a3fl", type=int, default=0, help="toggle a3fl behaviour (default: 0)")
     parser.add_argument("--selection", type=str, default="fixed", help="aggregator selection (default: fixed)")
     parser.add_argument("--save", type=int, default=1, help="toggle saving models (default: 1)")
     parser.add_argument("--bd_percent", type=float, default=1, help="percentage to backdoor")
     parser.add_argument("--batch_size", type=int, default=64, help="batch size")
-    parser.add_argument("--lira", type=int, default=0, help="Lira (offline toggle)")
-    parser.add_argument("--retrainPoint", type=int, default=0, help="retrain point")
-
 
     args = parser.parse_args()
     # Convert 0/1 flags to booleans
@@ -162,7 +110,6 @@ def parse_args():
     args.adaptive = bool(args.adaptive)
     args.asr = bool(args.asr)
     args.cleanTog = bool(args.cleanTog)
-    args.a3fl = bool(args.a3fl)
     args.save = bool(args.save)
     #Get params
     args.net = getModel(args.net)
@@ -202,15 +149,12 @@ if __name__ == '__main__':
     lossFunc = args.lossFunc
     lr = args.lr
     startMal = args.startMal
-    a3fl = args.a3fl
     save = args.save
     bd_percent = args.bd_percent
     batch_size = args.batch_size
-    lira = args.lira
     print(args)
     headerFile = headerFile + "/"
     bDoorRefCount = percentages.count(0.0)
-    retrainPoint = args.retrainPoint
     # Load Data
     trainLoader, testLoader, malTrainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,
                                                                  attack_type=attack_type, backdoor=backdoor,alpha=alpha,
@@ -226,24 +170,6 @@ if __name__ == '__main__':
     # Get the backdoored samples available to co-ordinated malicious clients
     _, _, trainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,attack_type=attack_type,backdoor=backdoor,alpha=alpha,
                                            bd_percent=bd_percent, bs=batch_size)
-    detector = None
-    if lira == 1:
-        from Utils.Lira import LiraBackdoorDetector, BackdoorConfig, LiraConfig
-
-        detector = LiraBackdoorDetector(
-            model_fn=net,
-            backdoor_cfg=BackdoorConfig(poison_frac=[0.05,0.1,0.2,0.4,0.6,0.8,0.9,0.95], target_label=1),
-            lira_cfg=LiraConfig(n_shadow=32, epochs=15), # 8 15
-
-            #backdoor_cfg=BackdoorConfig(poison_frac=[0.05, 0.95], target_label=1),
-            #lira_cfg=LiraConfig(n_shadow=2, epochs=1), # 8 15
-        )
-        detector.fit(malLoader,dataset)
-        dir_ = os.path.dirname(headerFile)
-        if dir_ and not os.path.exists(dir_):
-            os.makedirs(dir_)
-
-        detector.save(headerFile + "lira_detector.pt")
 
     g, gAccs, gLosses, gASR, accs, losses, selected, gpreds, cpreds, alphas = FedUtils.trainFedModel(trainLoader, testLoader, malLoader,
                                                                    numClients, trainloader, trainingRounds, epochs,
@@ -254,11 +180,9 @@ if __name__ == '__main__':
                                                                    r=r,adaptiveInterval=ai, attack_type=attack_type,
                                                                    asr=asr,backdoor=backdoor,lossFunc=lossFunc,
                                                                                                      startMal=startMal,
-                                                                                                     a3fl=a3fl,save=save,
+                                                                                                     save=save,
                                                                                                      bd_percent = bd_percent,
-                                                                                                     batch_size = batch_size,
-                                                                                                     detector = detector,
-                                                                                                     retrainPoint=retrainPoint)
+                                                                                                     batch_size = batch_size)
 
     if numMal > 0: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses, gpreds,cpreds,selected, alphas,file=headerFile)
     else: DataAug.SaveData(gAccs,gASR,gLosses,accs,losses,gpreds,cpreds,selected, alphas,file=headerFile, ben=True)
@@ -278,8 +202,6 @@ if __name__ == '__main__':
     if cleanTog:
         if save:
             clean(headerFile + "trainloader")
-            if lira == 1:
-                clean(headerFile + "lira_detector.pt")
         try:
             clean(headerFile + "FederatedModels")
             clean(headerFile + "ReferenceModels")
