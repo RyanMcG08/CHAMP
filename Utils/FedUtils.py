@@ -76,7 +76,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
     gpreds = []
     cpreds = []
     alphas = []
-    if selection == "fixed":
+    if selection == "fixed" and numClients > 10:
         full_setup = get_fixed(trainingRounds, numClients,numMal,10,startMal)
     for round in range(trainingRounds):
         if verbose:
@@ -164,7 +164,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                         toggle += selected_[i]
                 selected.append(toggle)
         except:
-            fed = getAgg(nets, scheme, trainLoader, param, global_model,numMal,round,file)
+            fed = getAgg(nets, scheme, trainLoader, param, global_model)
         gLoss, gAcc = Training.testModel(fed, combined_loader, "Federated Model on test set",verbose=verbose)
         if malLoader != None and (attack_type == 1 or attack_type == 3):
             _, gASR = Training.testModel(fed, backdooredLoader, "Federated Model on all backdoored data in malicious clients",verbose=verbose, asr=True)
