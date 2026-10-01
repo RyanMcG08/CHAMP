@@ -1,3 +1,5 @@
+import copy
+
 from torchvision import transforms
 from torchvision.datasets import MNIST
 from torch.utils.data import random_split, Subset, DataLoader
@@ -42,22 +44,19 @@ def backdoorInsertion(indexes, dataset_, type,backdoor):
     if isinstance(backdoor, list) and len(backdoor) == 2:
 
         mask, trigger = backdoor
-        mask = torch.tensor(mask[0]).permute(1, 2, 0).float()  # now (3,32,32)
-        trigger = torch.tensor(trigger[0]).permute(1, 2, 0).float()  # now (3,32,32)
+        mask = torch.tensor(mask[0]).permute(1, 2, 0).float()
+        trigger = torch.tensor(trigger[0]).permute(1, 2, 0).float()
         for index in indexes:
 
             img = dataset_.data[index] / 255.0
 
-            # Ensure correct shape (C,H,W)
             if len(img.shape) == 2:
                 img = img.unsqueeze(0)
 
             poisoned = (1 - mask[0]) * img + mask[0] * trigger[0]
 
-            # Store back (rescale)
             dataset_.data[index] = (poisoned * 255).type(torch.uint8)
 
-            # Change label
             if type == 0:
                 dataset_.targets[index] = 1
             elif type == 1:
@@ -76,21 +75,6 @@ def backdoorInsertion(indexes, dataset_, type,backdoor):
             elif type == 1:
                 dataset_.targets[index] = random.randint(1, 9)
         return dataset_
-
-def labelFlipping(indexes, dataset_, type):
-    """
-    label flips indexes of a dataset
-    :param indexes: indexes to be indexed
-    :param dataset_: dataset
-    :param: Targeted or Untargeted
-    :return: the label-flipped dataset
-    """
-    for index in indexes:
-        if type == 0:
-            dataset_.targets[index] = 1
-        elif type == 1:
-            dataset_.targets[index] = random.randint(1, 9)
-    return dataset_
 
 
 def getLoaders(numClients, numMal, dataset=MNIST, attack_type=0, backdoor=letter_R, alpha=0, bd_percent = 1, bs = 64):
@@ -151,19 +135,33 @@ def getLoaders(numClients, numMal, dataset=MNIST, attack_type=0, backdoor=letter
             data.dataset = backdoorInsertion(indices_0, data.dataset, 0, backdoor)
         elif attack_type == 1:
             data.dataset = backdoorInsertion(indices_0, data.dataset, 1, backdoor)
-        elif attack_type == 2:
-            data.dataset = labelFlipping(indices_0, data.dataset, 0)
-        elif attack_type == 3:
-            data.dataset = labelFlipping(indices_0, data.dataset, 1)
+
         backdoored_samples.append(indices_0)
+
+    trainloader = None
+    backdoored_test_loader = None
 
     if backdoored_samples:
         all_backdoored = [i for sub in backdoored_samples for i in sub]
         trainloader_data = Subset(data.dataset, all_backdoored)
         trainloader = DataLoader(trainloader_data, batch_size=bs, shuffle=False)
-        return train_loaders, test_loaders, trainloader
-    else:
-        return train_loaders, test_loaders, None
+
+        dataT_bd = copy.deepcopy(dataT.dataset)
+
+        test_indices = dataT.indices
+        test_labels = torch.tensor(dataT.dataset.targets)[test_indices]
+        test_indices_0 = [idx for idx, lbl in zip(test_indices, test_labels) if lbl == 0]
+
+        if attack_type == 0:
+            dataT_bd = backdoorInsertion(test_indices_0, dataT_bd, 0, backdoor)
+        elif attack_type == 1:
+            dataT_bd = backdoorInsertion(test_indices_0, dataT_bd, 1, backdoor)
+
+        backdoored_test_data = Subset(dataT_bd, test_indices_0)
+        backdoored_test_loader = DataLoader(backdoored_test_data, batch_size=bs, shuffle=False)
+
+    return train_loaders, test_loaders, trainloader, backdoored_test_loader
+
 
 def getReferenceLoaders(trainloader, numRefs, percentages,dataset=MNIST,attack_type=0,backdoor=letter_R, bs = 64):
     """
@@ -199,7 +197,6 @@ def getReferenceLoaders(trainloader, numRefs, percentages,dataset=MNIST,attack_t
                             subset_indices]
         labels = torch.tensor(data.targets)[original_indices]
 
-        # Select indices where label == 0
         indices_0 = [original_indices[j] for j, label in enumerate(labels) if label == 0]
 
         indices_0 = indices_0[:int(percentages[i]*len(indices_0))]
@@ -207,10 +204,6 @@ def getReferenceLoaders(trainloader, numRefs, percentages,dataset=MNIST,attack_t
             data = backdoorInsertion(indices_0, data, 0,backdoor)
         if attack_type == 1:
             data = backdoorInsertion(indices_0, data, 1,backdoor)
-        if attack_type == 2:
-            data = labelFlipping(indices_0, data, 0)
-        if attack_type == 3:
-            data = labelFlipping(indices_0, data, 1)
 
     return train_loaders
 

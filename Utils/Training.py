@@ -3,7 +3,7 @@ import os
 from itertools import chain
 import numpy as np
 from Utils import DataAug, Training
-from AlexNet import *
+from Utils.Models import *
 import copy
 from torchvision.datasets import MNIST
 import torch.nn as nn
@@ -42,14 +42,11 @@ def cosine_similarity_loss(l, g):
     :g: global client model
     :return: Cosine similarity between a local client model and a global model
     """
-    # Flatten all parameters into a single vector for each model
     l_vec = torch.cat([param.view(-1) for param in l.parameters()])
     g_vec = torch.cat([param.view(-1) for param in g.parameters()])
 
-    # Normalize the vectors and compute cosine similarity
     cosine_sim = F.cosine_similarity(l_vec, g_vec, dim=0)
 
-    # Return cosine similarity loss (1 - sim), so minimizing it increases alignment
     return 1 - cosine_sim
 
 
@@ -110,7 +107,7 @@ def trainModel(net, epochs, trainloader, testloader, device, file, test, verbose
     return accs, losses
 
 def trainRefModels(loader,percentages,epochs,device,file = "",verbose=True,
-                   startingPoint = None,round = None,model=alexnet(),lr=0.1,dataset=MNIST,backdoor = DataAug.letter_R,save=True):
+                   startingPoint = None,round = None,model=BatchNormModel(),lr=0.1,dataset=MNIST,backdoor = DataAug.letter_R,save=True):
     """
     Trains the reference models based on the previous rounds global model performance
     :param loader: Loader to train reference models (all malicious client(s) data)
@@ -223,7 +220,6 @@ def getFVS(nets, loader,training = False,bDoorRefCount = 1):
     if not training:
         return fvs
 
-    # if we want to alter the experiments such that the clients
     refLabels = np.concatenate([np.full(int((len(fvs) / len(nets))*(len(nets) - bDoorRefCount)), 1),
                                 np.full(int((len(fvs) / len(nets))*(bDoorRefCount)), 0)])
     return fvs, refLabels

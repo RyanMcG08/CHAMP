@@ -1,6 +1,5 @@
 import os
 
-from AlexNet import *
 import torch
 import copy
 from sklearn.svm import SVC
@@ -8,15 +7,16 @@ import pickle
 from torchvision.datasets import MNIST
 from torch.utils.data import DataLoader,ConcatDataset
 from Utils import Training, DataAug
+from Utils.Models import *
 from itertools import cycle
 import numpy as np
 import random
 def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoader,trainingRounds,epochs,
-                  percentages, device, numMal, file = "", verbose = True,retrainPoint=1,model=alexnet(),
+                  percentages, device, numMal, file = "", verbose = True,retrainPoint=1,model=BatchNormModel(),
                   C=1,kernel="poly",tol=1e-3,lr = 0.1,dataset=MNIST,bDoorRefCount = 1,
-                  scheme = 0, param=0, adaptive=False, r=10, adaptiveInterval = 1,attack_type=0,delta=1,asr=False,
+                  scheme = 0, param=0, adaptive=False, r=10, adaptiveInterval = 1,attack_type=0,delta=1,
                   backdoor = DataAug.letter_R, lossFunc=Training.euclidean_dist,startMal = 0,
-                  selection = "fixed",save = True,bd_percent = 1, batch_size = 32):
+                  selection = "fixed",save = True,bd_percent = 1, batch_size = 64):
     """
     Runner that runs the federated learning system
     :param trainLoader: Set of trainloaders
@@ -56,13 +56,12 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
     :param batch_size: Batch size for training
     :return: the FL results
     """
-    #combining testsets
     datasets = [loader.dataset for loader in testLoader]
     combined_dataset = ConcatDataset(datasets)
 
     combined_loader = DataLoader(
         combined_dataset,
-        batch_size=128,
+        batch_size=64,
         shuffle=False
     )
     selected = []
@@ -96,8 +95,6 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                 if i < numMal and round > 0 and adaptive is True and (round+1) % adaptiveInterval == 0:
                     alpha = getAvMI(gpreds,r)
 
-                    if asr:
-                        alpha = getAvASR(gASRs,r)
                     if verbose:
                         print(f"Alpha {alpha}")
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
@@ -126,9 +123,6 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                     print(f"Training Local Model {i+1}")
                 if i < numMal and round > 0 and adaptive is True and (round+1) % adaptiveInterval == 0:
                     alpha = getAvMI(gpreds, r)
-
-                    if asr:
-                        alpha = getAvASR(gASRs,r)
                     if verbose:
                         print(f"Alpha {alpha}")
                     loss, acc = Training.trainModel(nets[i], epochs, trainLoader[i], testLoader[i], device,
@@ -149,7 +143,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
             for i in range(len(Clients)):
                 nets_.append(nets[Clients[i]])
         try:
-            fed, selected_ = getAgg(nets_,scheme,trainLoader,param, global_model,numMal,round,file)
+            fed, selected_ = getAgg(nets_,scheme,trainLoader,param)
             if (isinstance(selected_, int) == True):
                 if Clients[selected_] < numMal:
                     selected.append(1)
@@ -164,7 +158,7 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                         toggle += selected_[i]
                 selected.append(toggle)
         except:
-            fed = getAgg(nets, scheme, trainLoader, param, global_model)
+            fed = getAgg(nets, scheme, trainLoader, param)
         gLoss, gAcc = Training.testModel(fed, combined_loader, "Federated Model on test set",verbose=verbose)
         if malLoader != None and (attack_type == 1 or attack_type == 3):
             _, gASR = Training.testModel(fed, backdooredLoader, "Federated Model on all backdoored data in malicious clients",verbose=verbose, asr=True)
@@ -206,9 +200,9 @@ def trainFedModel(trainLoader, testLoader, malLoader, numClients,backdooredLoade
                     _, _, backdooredLoader = DataAug.getLoaders(numClients, int(numClients/2), dataset=dataset,
                                                                 attack_type=attack_type, bd_percent=bd_percent, bs=batch_size)
 
-                # Get feature vectors from reference models across backdoored samples and reference models across backdoored samples
+
                 refFVS, refLabels = Training.getFVS(refNets, backdooredLoader, training=True,bDoorRefCount=bDoorRefCount)
-                # Train SVC classifier on reference models Feature Vectors
+
                 if verbose:
                     print("Training Classifier")
                 classifier = SVC(kernel=kernel, probability=True, C=C,tol=tol)
@@ -264,7 +258,7 @@ def get_fixed(trainingRounds, numClients,numMal,clients_per_round,startMal):
 
         round_schedule.append(clients)
     return round_schedule
-def getAgg(nets, scheme, trainloader,param,numMal):
+def getAgg(nets, scheme, trainloader,param):
     """
     get and run RA scheme
     :param nets: Uploaded models to the server

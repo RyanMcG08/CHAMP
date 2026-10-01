@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import os
 from Utils import Training, DataAug
-from AlexNet import *
+from Utils.Models import *
 import shutil
 from torchvision.datasets import CIFAR10, FashionMNIST, CIFAR100, MNIST
 import argparse
@@ -15,15 +15,7 @@ def clean(file):
         os.remove(file)
 
 def getModel(model_name):
-    if model_name == 'alexnet':
-        return alexNetCifar
-    elif model_name == 'fashionMNISTCNN':
-        return FashionMNIST_CNN
-    elif model_name == 'fashionMNIST':
-        return ResNet18_fashionMNIST
-    elif model_name == 'fashionMNISTBN':
-        return ResNet18_fashionMNISTBN
-    elif model_name == 'cifar10':
+    if model_name == 'cifar10':
         return ResNet18_cifar10
     elif model_name == 'cifar10BN':
         return ResNet18_cifar10BN
@@ -32,16 +24,10 @@ def getModel(model_name):
     elif model_name == 'cifar100BN':
         return ResNet18_cifar100BN
 
-    elif model_name == 'resnetNoBN':
-        return ResNetNoBN
-    elif model_name == "alexnetBN":
-        return alexNetCifarBN
     elif model_name == "BatchNormOn":
         return BatchNormModel
     elif model_name == "BatchNormOff":
         return NonBatchNormModel
-    elif model_name == 'VGG16':
-        return VGG16
     elif model_name == 'GN':
         return ResNet18_cifar10_GN
     elif model_name == 'LN':
@@ -53,8 +39,6 @@ def getDataset(dataset_name):
         return CIFAR100
     elif dataset_name == "fashionMNIST":
         return FashionMNIST
-#    elif dataset_name == "imagenet":
-#        return TinyImageNet
     elif dataset_name == "mnist":
         return MNIST
 def getBackdoor(backdoor):
@@ -76,7 +60,7 @@ def getLoss(loss_no):
         lossFunc = Training.cosine_similarity_loss
     return lossFunc
 def parse_args():
-    modelChoices = ["alexnet","alexnetBN","fashionMNISTCNN","resnet","BatchNormOff","BatchNormOn", "cifar10","cifar10BN","cifar100","cifar100BN",'ResNetNoBN', 'ResNet18_cifar10', 'fashionMNIST', 'fashionMNISTBN', 'VGG16','GN','LN']
+    modelChoices = ["BatchNormOff","BatchNormOn", "cifar10","cifar10BN","cifar100","cifar100BN", 'GN','LN']
     parser = argparse.ArgumentParser(description="RunAttack script")
 
     parser.add_argument("--trainingRounds", type=int, default=50, help="Number of training rounds (default: 50)")
@@ -91,29 +75,25 @@ def parse_args():
     parser.add_argument("--r", type=int, default=5, help="Parameter r (default: 5)")
     parser.add_argument("--ai", type=int, default=1, help="Parameter ai (default: 1)")
     parser.add_argument("--attack_type", type=int, default=0, help="Attack type (default: 0)")
-    parser.add_argument("--asr", type=int, choices=[0,1], default=0, help="ASR flag (default: 0)")
     parser.add_argument("--percentages", nargs='*', type=float, default=[0.3,0.2,0.1,0.0,0.0,0.0], help="List of percentages")
     parser.add_argument("--cleanTog", type=int, choices=[0, 1], default=1, help="Clean flag (default: 1)")
-    parser.add_argument("--net",type=str, choices=modelChoices, default="fashionMNISTCNN", help="Model name (default: alexnet)")
-    parser.add_argument("--dataset", type=str, choices=["mnist","cifar10", "cifar100", "fashionMNIST", "imagenet"], default="fashionMNIST", help="Dataset name (default:Cifar10")
+    parser.add_argument("--net",type=str, choices=modelChoices, default="BatchNormOn", help="Model name (default: BatchNormOn)")
+    parser.add_argument("--dataset", type=str, choices=["mnist","cifar10", "cifar100", "fashionMNIST"], default="fashionMNIST", help="Dataset name (default:Cifar10")
     parser.add_argument("--backdoor", type=str, choices=["one", "three", "five", "LetterR"], default="three", help="Backdoor Type (default: one)")
     parser.add_argument("--alpha", type=float, default=0, help="Parameter alpha for IID level (default: 0)")
     parser.add_argument("--lossFunc", type=int, default=0, help="Loss Function (default: 0)")
     parser.add_argument("--lr", type=float, default=0.1, help="learning rate (default: 0.1)")
     parser.add_argument("--startMal", type=int, default=0, help="starting mal behaviour (default: 0)")
-    parser.add_argument("--a3fl", type=int, default=0, help="toggle a3fl behaviour (default: 0)")
     parser.add_argument("--selection", type=str, default="fixed", help="aggregator selection (default: fixed)")
     parser.add_argument("--save", type=int, default=1, help="toggle saving models (default: 1)")
-    parser.add_argument("--bd_percent", type=float, default=1, help="percentage to backdoor")
+    parser.add_argument("--bd_percent", type=float, default=0.01, help="percentage to backdoor")
     parser.add_argument("--batch_size", type=int, default=64, help="batch size")
 
     args = parser.parse_args()
     # Convert 0/1 flags to booleans
     args.verbose = bool(args.verbose)
     args.adaptive = bool(args.adaptive)
-    args.asr = bool(args.asr)
     args.cleanTog = bool(args.cleanTog)
-    args.a3fl = bool(args.a3fl)
     args.save = bool(args.save)
     #Get params
     args.net = getModel(args.net)
@@ -143,7 +123,6 @@ if __name__ == '__main__':
     r = args.r
     ai = args.ai
     attack_type = args.attack_type
-    asr = args.asr
     percentages = args.percentages
     cleanTog = args.cleanTog
     net = args.net
@@ -153,7 +132,6 @@ if __name__ == '__main__':
     lossFunc = args.lossFunc
     lr = args.lr
     startMal = args.startMal
-    a3fl = args.a3fl
     save = args.save
     bd_percent = args.bd_percent
     batch_size = args.batch_size
@@ -161,7 +139,7 @@ if __name__ == '__main__':
     bDoorRefCount = percentages.count(0.0)
 
     # Load Data
-    trainLoader, testLoader, malTrainloader = DataAug.getLoaders(numClients, numMal,dataset=dataset,
+    trainLoader, testLoader, malTrainloader, malTestLoader  = DataAug.getLoaders(numClients, numMal,dataset=dataset,
                                                                  attack_type=attack_type, backdoor=backdoor,alpha=alpha,
                                                                  bd_percent=bd_percent, bs=batch_size)
 
@@ -174,6 +152,8 @@ if __name__ == '__main__':
     losses_t = []
     accs_m = []
     losses_m = []
+    accs_tm = []
+    losses_tm = []
     for epoch in range(epochs):
         model.train()
 
@@ -184,19 +164,23 @@ if __name__ == '__main__':
             loss = criterion(outputs,labels)
             loss.backward()
             optimizer.step()
-
+        print(f"Epoch: {epoch}")
         acc, loss = Training.testModel(model, trainLoader[0], "Train", verbose)
         acc_t,loss_t= Training.testModel(model, testLoader[0], "Test", verbose)
-        acc_m, loss_m = Training.testModel(model, malTrainloader, "Test", verbose)
+        acc_m, loss_m = Training.testModel(model, malTrainloader, "Train - Backdoor", verbose,asr=True)
+        acc_tm, loss_tm = Training.testModel(model, malTestLoader, "Test - Backdoor", verbose,asr=True)
         accs.append(acc)
         losses.append(loss)
         accs_t.append(loss_t)
         losses_t.append(acc_t)
         accs_m.append(loss_m)
         losses_m.append(acc_m)
+        accs_tm.append(loss_tm)
+        losses_tm.append(acc_tm)
 
     with open(headerFile + '.csv', mode='w', newline='') as file_:
         writer = csv.writer(file_)
-        writer.writerow(['Accs', 'Losses', 'testingAccs', 'testingLosses', 'bdAccs', 'bdLosses'])
-        for acc, loss, asr, sel, alp, boo in zip(accs, losses, accs_t, losses_t, accs_m,losses_m):
-            writer.writerow([acc, loss, asr, sel, alp, boo])
+        writer.writerow(['Accs', 'Losses', 'testingAccs', 'testingLosses', 'bdAccs', 'bdLosses','bdAccsT', 'bdLossesT'])
+        for acc, loss, acct,losst,accb,lossb,accbt,lossbt in zip(accs, losses, accs_t, losses_t, accs_m,losses_m,accs_tm,losses_tm):
+            writer.writerow([loss, acc, acct,losst,accb,lossb,accbt,lossbt])
+

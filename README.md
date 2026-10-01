@@ -20,7 +20,7 @@ python RunAttack.py [arguments]
 
 ### Baseline Example (FL):
 python RunAttack.py --trainingRounds 50 --numClients 10 --numMal 1 --scheme 1 --adaptive 1 --attack_type 0
-### Baseline Centralised (FL):
+### Baseline Centralised:
 python RunCentralised.py --trainingRounds 1 --epochs 50 --numClients 1 --numMal 1 --attack_type 0
 
 ## Overview of arguments
@@ -33,17 +33,16 @@ Arguments:
 - epochs (int, default: 5): Local training epochs per client  
 - headerFile (str, default: "test"): Path for logging output files  
 - verbose (int, 0 or 1, default: 0): Verbose mode toggle  
-- scheme (int, default: 0): Aggregation/defense scheme ID  
+- scheme (int, default: 0): Aggregation/defense scheme  
 - param (float, default: 0.0): Parameter for selected scheme if possible  
 - adaptive (int, 0 or 1, default: 0): Toggle for adaptive loss function (champ)
 - r (int, default: 5): number of training rounds to consider in $\alpha$ calculations (champ)
 - ai (int, default: 1): Number of intervals we recalculate $\alpha$ (champ)
 - attack_type (int, default: 0): Attack type
-- asr (int, 0 or 1, default: 0): Toggle for using ASR as loss function scalar instead of Membership Inference  
 - percentages (list of floats, default: [0.3, 0.2, 0.1, 0.0, 0.0, 0.0]): Percentage of poisoned samples and number of reference models (champ)
 - cleanTog (int, 0 or 1, default: 1): Toggle cleaning all models used in simulation of FL system
-- net (str, choices: choices, default: "fashionMNISTCNN"): Model architecture  
-- dataset (str, choices: "MNIST", "cifar10","cifar100", "fashionMNIST", default: "fashionMNIST"): Dataset name  
+- net (str, choices: choices, default: "BatchNormOn"): Model architecture  
+- dataset (str, choices: "mnist", "cifar10","cifar100", "fashionMNIST", default: "fashionMNIST"): Dataset name  
 - backdoor (str, choices: "one", "three", "five", default: "letterR"): Backdoor trigger type  
 - alpha (int, default: 0): Parameter for Dirichlet distribution in non-IID data)
 - lossFunc (int, default: 0): Loss function metric 
@@ -58,7 +57,7 @@ Arguments:
 0. FedAvg 
 1. Median 
 2. Trimmed-Mean
-3. Krum/Mkrum (vary the "param" to toggle multikrum or krum (param = 1 == Krum))
+3. Multi-krum (param = 1 == Krum))
 4. Bulyan
 5. RFA
 6. Direction Alignment Inspection

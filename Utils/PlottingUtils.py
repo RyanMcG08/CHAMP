@@ -1,7 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import csv
-
 def GlobalPlots(accs,asrs,losses,file="",verbose=True):
     """
     Saves global plots to output file
@@ -14,13 +13,11 @@ def GlobalPlots(accs,asrs,losses,file="",verbose=True):
     """
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
-    #ACC
     ax1.set_xlabel("Training Rounds")
     ax1.set_ylabel("Accuracy")
     line1, = ax1.plot(np.arange(1, int(len(accs)+1)),accs, label="Accuracy")
     ax1.tick_params(axis="y")
 
-    #ASR
     ax2 = ax1.twinx()
     ax2.set_ylabel("ASR")
     line2, = ax2.plot(np.arange(1, int(len(asrs)+1)), asrs, label="ASR",color="red")
@@ -40,7 +37,7 @@ def GlobalPlots(accs,asrs,losses,file="",verbose=True):
     plt.close()
 
     plt.figure(figsize=(10, 6))
-    #Loss
+
     plt.plot(losses, label="Loss")
     plt.xlabel("Training Rounds")
     plt.ylabel("Loss")
